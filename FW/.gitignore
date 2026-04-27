@@ -1,0 +1,12 @@
+# STM32CubeIDE / Eclipse workspace settings
+**/.metadata/
+**/.settings/
+
+# Build output folders (main project + test subprojects)
+**/Debug/
+**/Release/
+
+# Backup / temp files
+*.bak
+*.swp
+*~
