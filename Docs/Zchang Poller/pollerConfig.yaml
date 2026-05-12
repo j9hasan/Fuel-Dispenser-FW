@@ -1,0 +1,39 @@
+# @format
+
+# --- Device / line ---
+port: "COM3" # override via --port
+addr: 1 # override via --addr
+baud: 4800 # 4800 8N1 per Genuine protocol
+timeout_ms: 120 # serial read timeout (ms)
+
+# --- Polling cadence ---
+interval_idle_ms: 5 # status poll cadence when idle
+interval_busy_ms: 0 # realtime cadence when busy (0 = as fast as possible)
+interval_price_ms: 100 # how often we refresh unit price
+
+# --- Logging ---
+log_jsonl: "out/logs/data.jsonl"
+log_csv: "out/csv/deliveries.csv"
+print_raw_frames: false # set true for troubleshooting
+
+# --- Frame constants per PDF ---
+func:
+  read: 0x03
+  write: 0x10
+  event: 0x0C
+
+origin:
+  status: 0x00
+  realtime: 0x20
+  stopped: 0x30
+  unit_price: 0x55
+  set_mode: 0x5A
+  accum_total: 0x60 # Section 4.10
+
+length:
+  status: 0x01
+  realtime: 0x08
+  stopped: 0x08
+  unit_price: 0x04
+  set_mode: 0x01
+  accum_total: 0x0C # 12 bytes (6+6 BCD)
