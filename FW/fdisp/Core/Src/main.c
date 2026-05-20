@@ -60,6 +60,14 @@ static void MX_USART3_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint8_t UART1_rxBuffer[12] = { 0 };
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	HAL_GPIO_WritePin(DE_GPIO_GPIO_Port, DE_GPIO_Pin, GPIO_PIN_SET);
+	HAL_UART_Transmit(&huart1, UART1_rxBuffer, 12, 100);
+	HAL_GPIO_WritePin(DE_GPIO_GPIO_Port, DE_GPIO_Pin, GPIO_PIN_RESET);
+	HAL_UART_Receive_IT(&huart1, UART1_rxBuffer, 12);
+}
 
 /* USER CODE END 0 */
 
@@ -97,13 +105,11 @@ int main(void) {
 	MX_USART1_UART_Init();
 	MX_USART3_UART_Init();
 	/* USER CODE BEGIN 2 */
-
+	HAL_UART_Receive_IT(&huart1, UART1_rxBuffer, 12);
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
-	uint8_t cmd[] = "AT\r\n";
-	uint8_t rx[30];
 
 	HAL_Delay(3000); // Wait for EC200U to boot
 
@@ -115,33 +121,8 @@ int main(void) {
 //		HAL_UART_Transmit(&huart1, msg, sizeof(msg) - 1, 100);
 //		HAL_GPIO_WritePin(DE_GPIO_GPIO_Port, DE_GPIO_Pin, GPIO_PIN_RESET);
 //		HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_RESET);
-//		HAL_Delay(1000);
-//
-//		uint8_t cmd[] = "AT\r\n";
-//		HAL_UART_Transmit(&huart3, cmd, sizeof(cmd)-1, 100);
-//
-//		uint8_t rx[100];
-//		HAL_UART_Receive(&huart3, rx, sizeof(rx), 1000);
-
-		memset(rx, 0, sizeof(rx));
-
-		// Send AT command
-		HAL_UART_Transmit(&huart3, cmd, sizeof(cmd) - 1, 100);
-
-		// Wait for response
-		HAL_Delay(100);
-
-		// Receive response (try small length)
-		HAL_UART_Receive(&huart3, rx, 10, 500);
-
-		// Check if "OK" received
-		if (strstr((char*) rx, "OK") != NULL) {
-			HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
-		} else {
-			HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_RESET);
-		}
-
 		HAL_Delay(1000);
+
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
