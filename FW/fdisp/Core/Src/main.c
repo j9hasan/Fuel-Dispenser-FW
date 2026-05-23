@@ -98,6 +98,28 @@ void Disp_ReadStatus(void) {
 
 	RS485_Send(&dispenser, tx, len);
 }
+
+typedef struct {
+	float volume;
+	float sale;
+} FuelData_t;
+
+FuelData_t fuelData;
+
+uint8_t BCD_To_Dec(uint8_t bcd) {
+	return ((bcd >> 4) * 10) + (bcd & 0x0F);
+}
+
+uint32_t ParseBCD(uint8_t *buf, uint8_t bytes) {
+	uint32_t value = 0;
+
+	for (uint8_t i = 0; i < bytes; i++) {
+		value *= 100;
+		value += BCD_To_Dec(buf[i]);
+	}
+
+	return value;
+}
 /* USER CODE END 0 */
 
 /**
@@ -152,17 +174,40 @@ int main(void) {
 
 		Disp_GetFuelingRealtime();
 
-		HAL_Delay(1000);
+//		HAL_Delay(500);
 
 		// Data reception
+
 		if (dispenser.rxDone) {
 			dispenser.rxDone = false;
 
 			if (Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen)) {
-				uint8_t status = dispenser.rxBuf[4];
+				// Realtime fueling response
+				if (dispenser.rxBuf[2] == 0x03 && dispenser.rxBuf[3] == 0x08) {
+					// -------------------------
+					// Volume
+					// -------------------------
+
+					uint32_t volumeRaw;
+
+					volumeRaw = ParseBCD(&dispenser.rxBuf[4], 4);
+
+					fuelData.volume = volumeRaw / 10000.0f;
+
+					// -------------------------
+					// Sale
+					// -------------------------
+
+					uint32_t saleRaw;
+
+					saleRaw = ParseBCD(&dispenser.rxBuf[8], 4);
+
+					fuelData.sale = saleRaw / 100.0f;
+				}
 			}
 		}
-		HAL_Delay(10);
+
+		HAL_Delay(100);
 
 		/* USER CODE END WHILE */
 
