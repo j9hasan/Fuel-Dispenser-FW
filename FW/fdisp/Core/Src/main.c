@@ -28,12 +28,21 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-RS485_Handle_t dispenser;
+typedef struct {
+	float volume;
+	float sale;
+} FuelData_t;
+
+typedef enum {
+	APP_POLL_STATUS = 0, APP_READ_STOPPED,
+} AppState_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define DISP_STATUS   0x00
+#define DISP_STOPPED  0x30
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,7 +57,10 @@ UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
+RS485_Handle_t dispenser;
 
+static FuelData_t g_transaction;
+static AppState_t g_appState = APP_POLL_STATUS;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -59,96 +71,62 @@ static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+static uint8_t BCD_To_Dec(uint8_t bcd);
+static uint32_t ParseBCD(uint8_t *buf, uint8_t bytes);
+static float ParseBCDFloat(uint8_t *buf, uint8_t bytes, uint8_t decimals);
+static void Disp_ReadStatus(void);
+static void Disp_GetStoppedData(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 	if (huart == &huart1) {
 		dispenser.rxLen = Size;
-
 		dispenser.rxDone = true;
-
 		HAL_UARTEx_ReceiveToIdle_DMA(&huart1, dispenser.rxBuf,
 		RS485_RX_BUFFER_SIZE);
 	}
 }
 
+static uint8_t BCD_To_Dec(uint8_t bcd) {
+	return ((bcd >> 4) * 10) + (bcd & 0x0F);
+}
+
+static uint32_t ParseBCD(uint8_t *buf, uint8_t bytes) {
+	uint32_t value = 0;
+	for (uint8_t i = 0; i < bytes; i++) {
+		value *= 100;
+		value += BCD_To_Dec(buf[i]);
+	}
+	return value;
+}
+
+static float ParseBCDFloat(uint8_t *buf, uint8_t bytes, uint8_t decimals) {
+	uint32_t raw = ParseBCD(buf, bytes);
+	float div = 1.0f;
+	for (uint8_t i = 0; i < decimals; i++)
+		div *= 10.0f;
+	return (float) raw / div;
+}
+
+static void Disp_ReadStatus(void) {
+	uint8_t txBuf[16];
+	uint16_t txLen = Disp_BuildRead(0x01, DISP_STATUS, 0x01, txBuf);
+	RS485_Send(&dispenser, txBuf, txLen);
+}
+
+static void Disp_GetStoppedData(void) {
+	uint8_t txBuf[16];
+	uint16_t txLen = Disp_BuildRead(0x01, DISP_STOPPED, 0x08, txBuf);
+	RS485_Send(&dispenser, txBuf, txLen);
+}
 void Disp_SetControlMode(void) {
 	uint8_t tx[16];
 	uint8_t payload = 0x00;  // 0x00 = control mode
 	uint16_t len = Disp_BuildWrite(0x01, 0x5A, 1, &payload, tx);
 	RS485_Send(&dispenser, tx, len);
 }
-
-/*
- * Get real time fueling data
- *
- */
-void Disp_GetFuelingRealtime(void) {
-	uint8_t tx[16];
-
-	uint16_t txLen = Disp_BuildRead(0x01, DISP_REALTIME, 0x08, tx);
-
-	RS485_Send(&dispenser, tx, txLen);
-}
-
-/* Get Dispenser status
- *
- */
-
-void Disp_ReadStatus(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_STATUS, 1, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-void CheckUnitPrice(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_PRICE, 0x04, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-void accumulatedInjectedFuelAndSumOfSalesClassTotal(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_CLASS_TOTAL, 0x0C, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-void accumulatedInjectedFuelAndSumOfSales(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_TOTAL, 0x0C, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-typedef struct {
-	float volume;
-	float sale;
-} FuelData_t;
-
-FuelData_t fuelData;
-
-uint8_t BCD_To_Dec(uint8_t bcd) {
-	return ((bcd >> 4) * 10) + (bcd & 0x0F);
-}
-
-uint32_t ParseBCD(uint8_t *buf, uint8_t bytes) {
-	uint32_t value = 0;
-
-	for (uint8_t i = 0; i < bytes; i++) {
-		value *= 100;
-		value += BCD_To_Dec(buf[i]);
-	}
-
-	return value;
-}
-
 /* USER CODE END 0 */
 
 /**
@@ -201,18 +179,50 @@ int main(void) {
 //	HAL_Delay(2000); // Wait for EC200U to boot
 	while (1) {
 
-		// Data Transmission
-//		Disp_ReadStatus();
+		switch (g_appState) {
+		case APP_POLL_STATUS:
+			Disp_ReadStatus();
+			break;
 
-//		Disp_GetFuelingRealtime();
-		CheckUnitPrice();
-		HAL_Delay(500);
-		Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen);
-
-		// Data reception
-
+		case APP_READ_STOPPED:
+			Disp_GetStoppedData();
+			break;
+		}
 		HAL_Delay(100);
 
+		if (dispenser.rxDone) {
+			dispenser.rxDone = false;
+			if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen))
+				continue;
+
+			switch (g_appState) {
+
+			case APP_POLL_STATUS: {
+				uint8_t status = dispenser.rxBuf[4];
+
+				if (status == 0x03) {
+					g_appState = APP_READ_STOPPED;
+				}
+				break;
+			}
+
+			case APP_READ_STOPPED: {
+				if (dispenser.rxBuf[2] == DISP_FUNC_READ
+						&& dispenser.rxBuf[3] == 0x08) {
+
+					g_transaction.volume = ParseBCDFloat(&dispenser.rxBuf[4], 3,
+							2);
+					g_transaction.sale = ParseBCDFloat(&dispenser.rxBuf[8], 4,
+							2);
+
+					/* ✅ g_transaction.volume and g_transaction.sale
+					 * are ready — send to server, save to flash, etc. */
+				}
+				g_appState = APP_POLL_STATUS;
+				break;
+			}
+			}
+		}
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
