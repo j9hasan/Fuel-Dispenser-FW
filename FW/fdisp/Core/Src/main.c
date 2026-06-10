@@ -15,6 +15,12 @@
  *
  ******************************************************************************
  */
+/*
+ * Main loop behavior:
+ When status = 0x03 — switches to APP_READ_STOPPED, sends one request to 0x30,
+ parses volume and sale into g_transaction,
+ then goes straight back to polling status.
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
