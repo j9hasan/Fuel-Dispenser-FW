@@ -56,6 +56,11 @@ void RS485_StartReceive(RS485_Handle_t *h) {
 	__HAL_DMA_DISABLE_IT(h->uart->hdmarx, DMA_IT_HT);
 }
 /*
+ * set to control mode
+ */
+
+
+/*
  * Build read command according to following frame mentioned in datasheet
  * A5 = header
  * 01 = dispenser address

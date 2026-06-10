@@ -75,16 +75,24 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 		RS485_RX_BUFFER_SIZE);
 	}
 }
+
+void Disp_SetControlMode(void) {
+	uint8_t tx[16];
+	uint8_t payload = 0x00;  // 0x00 = control mode
+	uint16_t len = Disp_BuildWrite(0x01, 0x5A, 1, &payload, tx);
+	RS485_Send(&dispenser, tx, len);
+}
+
 /*
  * Get real time fueling data
  *
  */
 void Disp_GetFuelingRealtime(void) {
-	uint8_t txBuf[16];
+	uint8_t tx[16];
 
-	uint16_t txLen = Disp_BuildRead(0x01, DISP_REALTIME, 0x08, txBuf);
+	uint16_t txLen = Disp_BuildRead(0x01, DISP_REALTIME, 0x08, tx);
 
-	RS485_Send(&dispenser, txBuf, txLen);
+	RS485_Send(&dispenser, tx, txLen);
 }
 
 /* Get Dispenser status
@@ -98,7 +106,27 @@ void Disp_ReadStatus(void) {
 
 	RS485_Send(&dispenser, tx, len);
 }
+void CheckUnitPrice(void) {
+	uint8_t tx[16];
 
+	uint16_t len = Disp_BuildRead(0x01, DISP_PRICE, 0x04, tx);
+
+	RS485_Send(&dispenser, tx, len);
+}
+void accumulatedInjectedFuelAndSumOfSalesClassTotal(void) {
+	uint8_t tx[16];
+
+	uint16_t len = Disp_BuildRead(0x01, DISP_CLASS_TOTAL, 0x0C, tx);
+
+	RS485_Send(&dispenser, tx, len);
+}
+void accumulatedInjectedFuelAndSumOfSales(void) {
+	uint8_t tx[16];
+
+	uint16_t len = Disp_BuildRead(0x01, DISP_TOTAL, 0x0C, tx);
+
+	RS485_Send(&dispenser, tx, len);
+}
 typedef struct {
 	float volume;
 	float sale;
@@ -120,6 +148,7 @@ uint32_t ParseBCD(uint8_t *buf, uint8_t bytes) {
 
 	return value;
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -160,7 +189,10 @@ int main(void) {
 	RS485_Init(&dispenser, &huart1,
 	DE_GPIO_GPIO_Port,
 	DE_GPIO_Pin);
-
+	HAL_Delay(200);           // let dispenser finish booting
+	Disp_SetControlMode();
+	HAL_Delay(100);
+	dispenser.rxDone = false;
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -172,40 +204,12 @@ int main(void) {
 		// Data Transmission
 //		Disp_ReadStatus();
 
-		Disp_GetFuelingRealtime();
-
-//		HAL_Delay(500);
+//		Disp_GetFuelingRealtime();
+		CheckUnitPrice();
+		HAL_Delay(500);
+		Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen);
 
 		// Data reception
-
-		if (dispenser.rxDone) {
-			dispenser.rxDone = false;
-
-			if (Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen)) {
-				// Realtime fueling response
-				if (dispenser.rxBuf[2] == 0x03 && dispenser.rxBuf[3] == 0x08) {
-					// -------------------------
-					// Volume
-					// -------------------------
-
-					uint32_t volumeRaw;
-
-					volumeRaw = ParseBCD(&dispenser.rxBuf[4], 4);
-
-					fuelData.volume = volumeRaw / 10000.0f;
-
-					// -------------------------
-					// Sale
-					// -------------------------
-
-					uint32_t saleRaw;
-
-					saleRaw = ParseBCD(&dispenser.rxBuf[8], 4);
-
-					fuelData.sale = saleRaw / 100.0f;
-				}
-			}
-		}
 
 		HAL_Delay(100);
 
