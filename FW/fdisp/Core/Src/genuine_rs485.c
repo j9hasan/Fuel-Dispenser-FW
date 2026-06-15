@@ -60,11 +60,48 @@ void RS485_StartReceive(RS485_Handle_t *h)
 	__HAL_DMA_DISABLE_IT(h->uart->hdmarx, DMA_IT_HT);
 }
 /*
- * set to control mode
+ * Set device mode
  */
+bool Disp_SetMode(uint8_t mode) {
+    uint8_t tx[16];
+
+    uint16_t len = Disp_BuildWrite(0x01, 0x5A, 1, &mode, tx);
+    RS485_Send(&dispenser, tx, len);
+
+    HAL_Delay(100);
+
+    if (!dispenser.rxDone)
+        return false;
+
+    dispenser.rxDone = false;
+
+    if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen))
+        return false;
+
+    if (dispenser.rxBuf[2] != DISP_FUNC_WRITE ||
+        dispenser.rxBuf[3] != 0x5A)
+        return false;
+
+    return true;
+}
+
+//void Disp_SetMode(uint8_t mode)
+//{
+//    uint8_t tx[16];
+//    uint8_t payload = mode;
+//
+//    uint16_t len = Disp_BuildWrite(
+//        0x01,       // Device ID
+//        0x5A,       // Mode register
+//        1,
+//        &payload,
+//        tx);
+//
+//    RS485_Send(&dispenser, tx, len);
+//}
 
 /*
- * Build read command according to following frame mentioned in datasheet
+ * This function Builds read command according to following frame mentioned in datasheet
  * A5 = header
  * 01 = dispenser address
  * 03 = read

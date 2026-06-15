@@ -13,15 +13,14 @@
 #include <stdbool.h>
 
 /* Configuration */
-#define RS485_RX_BUFFER_SIZE      124
+#define RS485_RX_BUFFER_SIZE      48
 #define RS485_TX_TIMEOUT_MS       100
 #define RS485_RX_TIMEOUT_MS       200
 
-/* Packet offsets */
-#define PKT_HEADER_IDX            0
-#define PKT_ADDR_IDX              1
-#define PKT_FUNC_IDX              2
-#define PKT_LEN_IDX               3
+/* Device mode */
+
+#define DISP_MODE_CONTROL    0x00
+#define DISP_MODE_MONITOR    0x01
 
 /* Protocol */
 #define DISP_HEADER               0xA5
@@ -38,14 +37,38 @@ typedef enum {
 	DISP_PRESET_LITER = 0x10,
 	DISP_PRESET_SALE = 0x14,
 	DISP_REALTIME = 0x20,
-	DISP_CURRENT = 0x30,
+	DISP_CURRENT = 0x30, //Stopped data
 	DISP_PRICE = 0x55,
 	DISP_MODE = 0x5A,
 	DISP_TOTAL = 0x60,
 	DISP_CLASS_TOTAL = 0x70,
-	DISP_OFFLINE = 0x80
+	DISP_OFFLINE = 0x80,
+	DISP_READ_WRONG_CODE = 0x83,
+	DISP_WRITE_WRONG_CODE = 0x90
 
-} DispOrigin_t;
+} Disp_Origin_t;
+
+/*Disp status response*/
+typedef enum {
+	DISP_STATUS_IDLE = 0x00, DISP_STATUS_START_BY_VOLUME = 0x01, // start as litre
+	DISP_STATUS_START_BY_SALE = 0x02,   // start as sale
+	DISP_STATUS_STOP_REQUIRED = 0x03,
+	DISP_STATUS_BUSY = 0x04,
+	DISP_STATUS_NOZZLE_NOT_RETURNED = 0x05,
+	DISP_STATUS_AFTER_RESTART = 0x06
+
+} DISP_Status_t;
+
+/* Error codes returned by device when 0x83 happens*/
+typedef enum {
+	DISP_WRONG_CMD = 0x01,
+	DISP_DEVICE_STOP_WORKING = 0x03,
+	DISP_RESEND_COMMAND = 0x04,
+	DISP_DEVICE_BUSY = 0x05,
+	DISP_DEVICE_OFFLINE = 0x06,
+	DISP_CRC_ERROR = 0x07
+
+} DISP_ErrorCode_t;
 
 typedef struct {
 	UART_HandleTypeDef *uart;
@@ -58,6 +81,8 @@ typedef struct {
 	volatile bool rxDone;
 
 } RS485_Handle_t;
+
+extern RS485_Handle_t dispenser;
 
 /* Init */
 void RS485_Init(RS485_Handle_t *h, UART_HandleTypeDef *uart,
@@ -83,8 +108,7 @@ bool Disp_ParsePacket(uint8_t *buf, uint16_t len);
 /* CRC */
 uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
 
-/* Read Data */
-//void Disp_GetFuelingRealtime(void);
-//void Disp_ReadStatus(void);
+/* Set Dispenser mode*/
+bool Disp_SetMode(uint8_t mode);
 
 #endif /* INC_GENUINE_RS485_H_ */

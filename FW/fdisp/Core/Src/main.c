@@ -47,8 +47,7 @@ typedef enum {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define DISP_STATUS   0x00
-#define DISP_STOPPED  0x30
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -124,15 +123,10 @@ static void Disp_ReadStatus(void) {
 
 static void Disp_GetStoppedData(void) {
 	uint8_t txBuf[16];
-	uint16_t txLen = Disp_BuildRead(0x01, DISP_STOPPED, 0x08, txBuf);
+	uint16_t txLen = Disp_BuildRead(0x01, DISP_CURRENT, 0x08, txBuf);
 	RS485_Send(&dispenser, txBuf, txLen);
 }
-void Disp_SetControlMode(void) {
-	uint8_t tx[16];
-	uint8_t payload = 0x00;  // 0x00 = control mode
-	uint16_t len = Disp_BuildWrite(0x01, 0x5A, 1, &payload, tx);
-	RS485_Send(&dispenser, tx, len);
-}
+
 /* USER CODE END 0 */
 
 /**
@@ -174,7 +168,9 @@ int main(void) {
 	DE_GPIO_GPIO_Port,
 	DE_GPIO_Pin);
 	HAL_Delay(200);           // let dispenser finish booting
-	Disp_SetControlMode();
+	if (!Disp_SetMode(DISP_MODE_CONTROL)) {
+		uint8_t errCode = dispenser.rxBuf[3];
+	}
 	HAL_Delay(100);
 	dispenser.rxDone = false;
 	/* USER CODE END 2 */
@@ -194,10 +190,12 @@ int main(void) {
 			Disp_GetStoppedData();
 			break;
 		}
+
 		HAL_Delay(100);
 
 		if (dispenser.rxDone) {
 			dispenser.rxDone = false;
+
 			if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen))
 				continue;
 
