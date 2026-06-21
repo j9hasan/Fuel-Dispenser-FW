@@ -274,8 +274,7 @@ static uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex,
  * plus how many individual fueling events (0-2000) got buffered.
  * Data layout: 5 bytes volume + 7 bytes sale + 2 bytes BCD count.
  */
-static bool Disp_ReadOfflineSummary(float *volume, float *sale,
-		uint16_t *count) {
+static bool Disp_ReadOfflineSummary(float *volume, float *sale, uint16_t *count) {
 	uint8_t tx[16];
 	uint16_t txLen = Disp_BuildRead(0x01, DISP_OFFLINE_TOTAL, 0x0E, tx);
 
@@ -307,8 +306,7 @@ static bool Disp_ReadOfflineSummary(float *volume, float *sale,
  * back as func 0x03 / len 0x08, with the same 4+4 BCD layout as the
  * live realtime read (volume /10000, sale /100).
  */
-static bool Disp_ReadOfflineRecord(uint16_t index, float *volume,
-		float *sale) {
+static bool Disp_ReadOfflineRecord(uint16_t index, float *volume, float *sale) {
 	uint8_t tx[16];
 	uint16_t txLen = Disp_BuildEventRead(0x01, index, 0x08, tx);
 
@@ -366,8 +364,7 @@ static void Disp_PowerOnHandshake(void) {
 	float summaryVolume, summarySale;
 	uint16_t offlineCount;
 
-	if (!Disp_ReadOfflineSummary(&summaryVolume, &summarySale,
-			&offlineCount)) {
+	if (!Disp_ReadOfflineSummary(&summaryVolume, &summarySale, &offlineCount)) {
 		UartPrint("Step2: 4.11 summary read failed\r\n");
 		return;
 	}
@@ -420,14 +417,31 @@ static void Disp_PowerOnHandshake(void) {
 
 	// ---- Step 4 ----
 	if (Disp_ReadStatusBlocking(&status)) {
-		len = snprintf(line, sizeof(line), "Step4: status=0x%02X\r\n",
-				status);
+		len = snprintf(line, sizeof(line), "Step4: status=0x%02X\r\n", status);
 		HAL_UART_Transmit(&huart3, (uint8_t*) line, (uint16_t) len, 1000);
 	} else {
 		UartPrint("Step4: status read failed\r\n");
 	}
 
 	UartPrint("DONE\r\n");
+}
+
+/* A5 01 0C 00 01 08 CRC8
+ * uint8_t txBuf[16];
+ * uint8_t cmd[] = {0x01, 0x0C, 0x00, 0x01, 0x08}; without header a5 and crc8
+ * uint8_t cmd2[] = {0x01, 0x05, 0x01};
+ * A5 + payload + CRC8(payload) format
+ */
+
+uint16_t Disp_BuildCustomCommand(const uint8_t *payload, uint8_t payloadLen,
+		uint8_t *txBuf) {
+	txBuf[0] = DISP_HEADER;      // 0xA5
+
+	memcpy(&txBuf[1], payload, payloadLen);
+
+	txBuf[payloadLen + 1] = Disp_CRC8(&txBuf[1], payloadLen);
+
+	return payloadLen + 2;
 }
 
 /* USER CODE END 0 */
@@ -475,7 +489,21 @@ int main(void) {
 
 	// Power-on handshake per the flow chart: check status, and only
 	// pull offline-buffered records if the dispenser reports offline.
-	Disp_PowerOnHandshake();
+	//	Disp_PowerOnHandshake();
+
+	// read status
+	uint8_t txBuf[16];
+
+	const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
+	const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
+
+	uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status), txBuf);
+	RS485_Send(&dispenser, txBuf, txLen);
+
+	memset(txBuf, 0, sizeof(txBuf));
+
+	txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
+	RS485_Send(&dispenser, txBuf, txLen);
 
 	// Solid LED = handshake finished (check USART3 terminal for the log)
 	HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
