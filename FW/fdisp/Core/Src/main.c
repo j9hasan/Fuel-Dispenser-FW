@@ -87,6 +87,7 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 OfflineFuelRecord_t offlineLog[OFFLINE_FUEL_LOG_MAX];
 volatile uint16_t offlineLogCount = 0;
+bool flag = 0;
 
 /* USER CODE END PV */
 
@@ -497,7 +498,8 @@ int main(void) {
 	const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
 	const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
 
-	uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status), txBuf);
+	uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status),
+			txBuf);
 	RS485_Send(&dispenser, txBuf, txLen);
 
 	memset(txBuf, 0, sizeof(txBuf));
@@ -515,7 +517,20 @@ int main(void) {
 
 	while (1) {
 		// Remark on the flow chart: POS checks status every 100 ms.
+
+		const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
+
+		uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status),
+				txBuf);
+		RS485_Send(&dispenser, txBuf, txLen);
 		HAL_Delay(100);
+		if (flag) {
+			const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
+			memset(txBuf, 0, sizeof(txBuf));
+
+			txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
+			RS485_Send(&dispenser, txBuf, txLen);
+		}
 
 		/* USER CODE END WHILE */
 

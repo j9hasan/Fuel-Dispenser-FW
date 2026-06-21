@@ -13,7 +13,7 @@
 #include <stdbool.h>
 
 /* Configuration */
-#define RS485_RX_BUFFER_SIZE      48
+#define RS485_RX_BUFFER_SIZE      24
 #define RS485_TX_TIMEOUT_MS       100
 #define RS485_RX_TIMEOUT_MS       200
 
