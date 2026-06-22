@@ -261,14 +261,14 @@ int16_t Disp_CheckOfflineFuelingCount(void) {
 
 	while (!dispenser.rxDone) {
 		if ((HAL_GetTick() - start) > 200)
-			return -1;
+			return -2;
 	}
-
+	HAL_Delay(200);
 	if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen))
-		return -1;
+		return -3;
 
 	if (dispenser.rxLen < 18)
-		return -1;
+		return -4;
 
 	uint16_t bcd = ((uint16_t) dispenser.rxBuf[16] << 8) | dispenser.rxBuf[17];
 

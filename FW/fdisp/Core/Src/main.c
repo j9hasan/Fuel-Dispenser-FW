@@ -61,6 +61,9 @@ uint8_t txBuf[16]; // Buffer for storing command to be sent
 // Commands without Header A5 and CRC Byte
 const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
 const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
+DISP_Status_t status = -1;
+DISP_Status_t status_init = -1;
+int16_t fueling_count = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -196,13 +199,14 @@ int main(void) {
 //
 //	memset(txBuf, 0, sizeof(txBuf));
 
-	DISP_Status_t status = Disp_ReadStatus();
+	status_init = Disp_ReadStatus();
 
 //	txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
 //	RS485_Send(&dispenser, txBuf, txLen);
-
+	HAL_Delay(200);
 	// Check offline fueling count
-	int16_t fueling_count = Disp_CheckOfflineFuelingCount();
+	fueling_count = Disp_CheckOfflineFuelingCount();
+	HAL_Delay(200);
 
 	// Solid LED = handshake finished (check USART3 terminal for the log)
 	HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
@@ -215,7 +219,7 @@ int main(void) {
 	while (1) {
 		// Remark on the flow chart: POS checks status every 100 ms.
 
-		DISP_Status_t status = Disp_ReadStatus();
+		status = Disp_ReadStatus();
 		HAL_Delay(100);
 		if (status == DISP_STATUS_IDLE) {
 			// Dispenser is idle
