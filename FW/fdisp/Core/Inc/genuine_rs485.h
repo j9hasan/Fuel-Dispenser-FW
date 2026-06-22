@@ -50,12 +50,15 @@ typedef enum {
 
 /*Disp status response*/
 typedef enum {
-	DISP_STATUS_IDLE = 0x00, DISP_STATUS_START_BY_VOLUME = 0x01, // start as litre
+	DISP_STATUS_IDLE = 0x00, // Nozzle idle
+	DISP_STATUS_START_BY_VOLUME = 0x01, // start as litre
 	DISP_STATUS_START_BY_SALE = 0x02,   // start as sale
-	DISP_STATUS_STOP_REQUIRED = 0x03,
-	DISP_STATUS_BUSY = 0x04,
+	DISP_STATUS_STOPPED_FUELING = 0x03, // Status after Stop fueling
+	DISP_STATUS_BUSY = 0x04, // Fueling
 	DISP_STATUS_NOZZLE_NOT_RETURNED = 0x05,
-	DISP_STATUS_AFTER_RESTART = 0x06
+	DISP_STATUS_AFTER_RESTART = 0x06, // Nozzle offline
+	DISP_STATUS_UNKNOWN = 0xFF,
+	DISP_RS485_SEND_ERROR = 0xFE
 
 } DISP_Status_t;
 
@@ -110,5 +113,10 @@ uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
 
 /* Set Dispenser mode*/
 bool Disp_SetMode(uint8_t mode);
+
+/* Get device status */
+DISP_Status_t Disp_ReadStatus(void);
+/* Get offline records */
+int16_t Disp_CheckOfflineFuelingCount(void);
 
 #endif /* INC_GENUINE_RS485_H_ */

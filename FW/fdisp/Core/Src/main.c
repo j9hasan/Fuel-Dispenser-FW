@@ -31,44 +31,15 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 RS485_Handle_t dispenser;
-
-/*
- * Power-on offline-data handshake (per "flow_chart_when_power_on"):
- *   1. read status
- *   2. if status == 0x06 (nozzle offline): read 4.11 summary (event count)
- *   3. if count > 0: read each buffered record, newest first (count..1)
- *   4. read status again
- *
- * Verified byte-for-byte against a real capture:
- *  - 4.12 request uses func 0x0C, but the REPLY comes back as func 0x03
- *    (not 0x0C echoed).
- *  - a single offline record is 4 bytes volume (/10000) + 4 bytes sale
- *    (/100) - the same layout as the live realtime read, not the 3+5
- *    split implied by the datasheet's text example.
- */
-typedef struct {
-	uint16_t index;
-	float volume;
-	float sale;
-} OfflineFuelRecord_t;
-
-#define OFFLINE_FUEL_LOG_MAX 2000
+typedef enum {
+	DISP_DISCONNECTED, DISP_CONNECTED
+} DISP_CommState_t;
+DISP_CommState_t CommState = DISP_DISCONNECTED;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-/* Fallback defines in case these aren't already in genuine_rs485.h */
-#ifndef DISP_OFFLINE_TOTAL
-#define DISP_OFFLINE_TOTAL 0x80  /* 4.11: data bag offline */
-#endif
-
-#ifndef DISP_FUNC_EVENT
-#define DISP_FUNC_EVENT 0x0C    /* 4.12 request: event / offline record read */
-#endif
-
-#define DISP_STATUS_OFFLINE 0x06 /* status code: nozzle offline, needs handshake */
 
 /* USER CODE END PD */
 
@@ -85,10 +56,11 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
-OfflineFuelRecord_t offlineLog[OFFLINE_FUEL_LOG_MAX];
-volatile uint16_t offlineLogCount = 0;
 bool flag = 0;
-
+uint8_t txBuf[16]; // Buffer for storing command to be sent
+// Commands without Header A5 and CRC Byte
+const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
+const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,56 +91,6 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 		RS485_RX_BUFFER_SIZE);
 	}
 }
-/*
- * Get real time fueling data
- *
- */
-void Disp_GetFuelingRealtime(void) {
-	uint8_t txBuf[16];
-
-	uint16_t txLen = Disp_BuildRead(0x01, DISP_REALTIME, 0x08, txBuf);
-
-	RS485_Send(&dispenser, txBuf, txLen);
-}
-
-/* Get Dispenser status
- *
- */
-
-void Disp_ReadStatus(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_STATUS, 1, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-void CheckUnitPrice(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_PRICE, 0x04, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-void accumulatedInjectedFuelAndSumOfSalesClassTotal(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_CLASS_TOTAL, 0x0C, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-void accumulatedInjectedFuelAndSumOfSales(void) {
-	uint8_t tx[16];
-
-	uint16_t len = Disp_BuildRead(0x01, DISP_TOTAL, 0x0C, tx);
-
-	RS485_Send(&dispenser, tx, len);
-}
-typedef struct {
-	float volume;
-	float sale;
-} FuelData_t;
-
-FuelData_t fuelData;
 
 uint8_t BCD_To_Dec(uint8_t bcd) {
 	return ((bcd >> 4) * 10) + (bcd & 0x0F);
@@ -185,66 +107,9 @@ uint32_t ParseBCD(uint8_t *buf, uint8_t bytes) {
 	return value;
 }
 
-/*
- * Blocks until the UART RX-event callback flags a finished frame, or
- * the timeout elapses. Caller must clear rxDone right before sending,
- * so a stale flag from earlier traffic can't be mistaken for the new
- * response.
- */
-static bool RS485_WaitResponse(uint32_t timeout_ms) {
-	uint32_t start = HAL_GetTick();
-
-	while ((HAL_GetTick() - start) < timeout_ms) {
-		if (dispenser.rxDone) {
-			dispenser.rxDone = false;
-			return true;
-		}
-	}
-
-	return false;
-}
-
-/* Formats value as "%d.%02d" without needing printf float support. */
-static int FormatFixed2(char *buf, size_t bufSize, float value) {
-	int whole = (int) value;
-	int frac = (int) ((value - whole) * 100.0f + 0.5f);
-	return snprintf(buf, bufSize, "%d.%02d", whole, frac);
-}
-
-static void UartPrint(const char *s) {
-	HAL_UART_Transmit(&huart3, (uint8_t*) s, strlen(s), 1000);
-}
-
-/*
- * Step 1 / Step 4: blocking status read (origin 0x00, len 1).
- * Returns true and fills *status on success.
- */
-static bool Disp_ReadStatusBlocking(uint8_t *status) {
-	uint8_t tx[16];
-	uint16_t txLen = Disp_BuildRead(0x01, DISP_STATUS, 0x01, tx);
-
-	dispenser.rxDone = false;
-	RS485_Send(&dispenser, tx, txLen);
-
-	if (!RS485_WaitResponse(200)) {
-		return false;
-	}
-
-	if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen)) {
-		return false;
-	}
-
-	if (dispenser.rxBuf[2] != 0x03 || dispenser.rxBuf[3] != 0x01) {
-		return false;
-	}
-
-	*status = dispenser.rxBuf[4];
-	return true;
-}
-
-static uint8_t Disp_DecToBCD(uint8_t val) {
-	return (uint8_t) (((val / 10) << 4) | (val % 10));
-}
+//static uint8_t Disp_DecToBCD(uint8_t val) {
+//	return (uint8_t) (((val / 10) << 4) | (val % 10));
+//}
 
 /*
  * Build the 4.12 "read offline fueling record" frame.
@@ -253,189 +118,24 @@ static uint8_t Disp_DecToBCD(uint8_t val) {
  *
  * Master: A5 | addr | 0C | indexHiBCD | indexLoBCD | len | CRC8
  */
-static uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex,
-		uint8_t len, uint8_t *txBuf) {
-	uint8_t hiBCD = Disp_DecToBCD((uint8_t) (recordIndex / 100));
-	uint8_t loBCD = Disp_DecToBCD((uint8_t) (recordIndex % 100));
-
-	txBuf[0] = DISP_HEADER;
-	txBuf[1] = addr;
-	txBuf[2] = DISP_FUNC_EVENT;
-	txBuf[3] = hiBCD;
-	txBuf[4] = loBCD;
-	txBuf[5] = len;
-
-	txBuf[6] = Disp_CRC8(&txBuf[1], 5);
-
-	return 7;
-}
-
-/*
- * Step 2: 4.11 - accumulative volume/sale recorded while offline,
- * plus how many individual fueling events (0-2000) got buffered.
- * Data layout: 5 bytes volume + 7 bytes sale + 2 bytes BCD count.
- */
-static bool Disp_ReadOfflineSummary(float *volume, float *sale, uint16_t *count) {
-	uint8_t tx[16];
-	uint16_t txLen = Disp_BuildRead(0x01, DISP_OFFLINE_TOTAL, 0x0E, tx);
-
-	dispenser.rxDone = false;
-	RS485_Send(&dispenser, tx, txLen);
-
-	if (!RS485_WaitResponse(200)) {
-		return false;
-	}
-
-	if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen)) {
-		return false;
-	}
-
-	if (dispenser.rxBuf[2] != 0x03 || dispenser.rxBuf[3] != 0x0E) {
-		return false;
-	}
-
-	*volume = ParseBCD(&dispenser.rxBuf[4], 5) / 100.0f;
-	*sale = ParseBCD(&dispenser.rxBuf[9], 7) / 100.0f;
-	*count = (uint16_t) ParseBCD(&dispenser.rxBuf[16], 2);
-
-	return true;
-}
-
-/*
- * Step 3 (x N): 4.12 - read one buffered offline record by index.
- * Request func is 0x0C, but per the real capture the REPLY comes
- * back as func 0x03 / len 0x08, with the same 4+4 BCD layout as the
- * live realtime read (volume /10000, sale /100).
- */
-static bool Disp_ReadOfflineRecord(uint16_t index, float *volume, float *sale) {
-	uint8_t tx[16];
-	uint16_t txLen = Disp_BuildEventRead(0x01, index, 0x08, tx);
-
-	dispenser.rxDone = false;
-	RS485_Send(&dispenser, tx, txLen);
-
-	if (!RS485_WaitResponse(200)) {
-		return false;
-	}
-
-	if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen)) {
-		return false;
-	}
-
-	if (dispenser.rxBuf[2] != 0x03 || dispenser.rxBuf[3] != 0x08) {
-		return false;
-	}
-
-	*volume = ParseBCD(&dispenser.rxBuf[4], 4) / 10000.0f;
-	*sale = ParseBCD(&dispenser.rxBuf[8], 4) / 100.0f;
-
-	return true;
-}
-
-/*
- * Full power-on handshake, exactly matching the flow chart:
- *   1. check status
- *   2. if offline (0x06): read 4.11 summary
- *   3. if any events buffered: read each one, newest -> oldest
- *   4. check status again
- * Does nothing beyond the step-1 check if the device isn't offline -
- * no blind 2000-record sweep.
- */
-static void Disp_PowerOnHandshake(void) {
-	uint8_t status;
-	char line[80];
-	char numA[16], numB[16];
-	int len;
-
-	// ---- Step 1 ----
-	if (!Disp_ReadStatusBlocking(&status)) {
-		UartPrint("Step1: status read failed (no reply / bad CRC)\r\n");
-		return;
-	}
-
-	len = snprintf(line, sizeof(line), "Step1: status=0x%02X\r\n", status);
-	HAL_UART_Transmit(&huart3, (uint8_t*) line, (uint16_t) len, 1000);
-
-	if (status != DISP_STATUS_OFFLINE) {
-		UartPrint("Nozzle not offline - no handshake needed.\r\n");
-		return;
-	}
-
-	// ---- Step 2 ----
-	float summaryVolume, summarySale;
-	uint16_t offlineCount;
-
-	if (!Disp_ReadOfflineSummary(&summaryVolume, &summarySale, &offlineCount)) {
-		UartPrint("Step2: 4.11 summary read failed\r\n");
-		return;
-	}
-
-	if (offlineCount > OFFLINE_FUEL_LOG_MAX) {
-		offlineCount = OFFLINE_FUEL_LOG_MAX;
-	}
-
-	FormatFixed2(numA, sizeof(numA), summaryVolume);
-	FormatFixed2(numB, sizeof(numB), summarySale);
-	len = snprintf(line, sizeof(line),
-			"Step2: offline volume=%sL sale=%s events=%u\r\n", numA, numB,
-			offlineCount);
-	HAL_UART_Transmit(&huart3, (uint8_t*) line, (uint16_t) len, 1000);
-
-	// ---- Step 3 (only if events were actually buffered) ----
-	if (offlineCount == 0) {
-		UartPrint("Step3: 0 offline events - nothing to read.\r\n");
-	} else {
-		UartPrint("Step3: index,volume_L,sale\r\n");
-
-		uint16_t i = offlineCount;
-		while (i >= 1) {
-			float volume, sale;
-
-			if (Disp_ReadOfflineRecord(i, &volume, &sale)) {
-				if (offlineLogCount < OFFLINE_FUEL_LOG_MAX) {
-					offlineLog[offlineLogCount].index = i;
-					offlineLog[offlineLogCount].volume = volume;
-					offlineLog[offlineLogCount].sale = sale;
-					offlineLogCount++;
-				}
-
-				FormatFixed2(numA, sizeof(numA), volume);
-				FormatFixed2(numB, sizeof(numB), sale);
-				len = snprintf(line, sizeof(line), "%u,%s,%s\r\n", i, numA,
-						numB);
-			} else {
-				len = snprintf(line, sizeof(line), "%u,ERR,ERR\r\n", i);
-			}
-
-			HAL_UART_Transmit(&huart3, (uint8_t*) line, (uint16_t) len, 1000);
-
-			if (i == 1) {
-				break; // avoid uint16_t underflow past 0
-			}
-			i--;
-		}
-	}
-
-	// ---- Step 4 ----
-	if (Disp_ReadStatusBlocking(&status)) {
-		len = snprintf(line, sizeof(line), "Step4: status=0x%02X\r\n", status);
-		HAL_UART_Transmit(&huart3, (uint8_t*) line, (uint16_t) len, 1000);
-	} else {
-		UartPrint("Step4: status read failed\r\n");
-	}
-
-	UartPrint("DONE\r\n");
-}
-
-/* A5 01 0C 00 01 08 CRC8
- * uint8_t txBuf[16];
- * uint8_t cmd[] = {0x01, 0x0C, 0x00, 0x01, 0x08}; without header a5 and crc8
- * uint8_t cmd2[] = {0x01, 0x05, 0x01};
- * A5 + payload + CRC8(payload) format
- */
-
-uint16_t Disp_BuildCustomCommand(const uint8_t *payload, uint8_t payloadLen,
-		uint8_t *txBuf) {
+//static uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex,
+//		uint8_t len, uint8_t *txBuf) {
+//	uint8_t hiBCD = Disp_DecToBCD((uint8_t) (recordIndex / 100));
+//	uint8_t loBCD = Disp_DecToBCD((uint8_t) (recordIndex % 100));
+//
+//	txBuf[0] = DISP_HEADER;
+//	txBuf[1] = addr;
+//	txBuf[2] = DISP_FUNC_EVENT;
+//	txBuf[3] = hiBCD;
+//	txBuf[4] = loBCD;
+//	txBuf[5] = len;
+//
+//	txBuf[6] = Disp_CRC8(&txBuf[1], 5);
+//
+//	return 7;
+//}
+static uint16_t Disp_BuildCustomCommand(const uint8_t *payload,
+		uint8_t payloadLen, uint8_t *txBuf) {
 	txBuf[0] = DISP_HEADER;      // 0xA5
 
 	memcpy(&txBuf[1], payload, payloadLen);
@@ -488,24 +188,21 @@ int main(void) {
 
 	HAL_Delay(200); // let the bus settle before the first command
 
-	// Power-on handshake per the flow chart: check status, and only
-	// pull offline-buffered records if the dispenser reports offline.
-	//	Disp_PowerOnHandshake();
-
 	// read status
-	uint8_t txBuf[16];
 
-	const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
-	const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
+//	uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status),
+//			txBuf);
+//	RS485_Send(&dispenser, txBuf, txLen);
+//
+//	memset(txBuf, 0, sizeof(txBuf));
 
-	uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status),
-			txBuf);
-	RS485_Send(&dispenser, txBuf, txLen);
+	DISP_Status_t status = Disp_ReadStatus();
 
-	memset(txBuf, 0, sizeof(txBuf));
+//	txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
+//	RS485_Send(&dispenser, txBuf, txLen);
 
-	txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
-	RS485_Send(&dispenser, txBuf, txLen);
+	// Check offline fueling count
+	int16_t fueling_count = Disp_CheckOfflineFuelingCount();
 
 	// Solid LED = handshake finished (check USART3 terminal for the log)
 	HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
@@ -518,18 +215,33 @@ int main(void) {
 	while (1) {
 		// Remark on the flow chart: POS checks status every 100 ms.
 
-		const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
-
-		uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status),
-				txBuf);
-		RS485_Send(&dispenser, txBuf, txLen);
+		DISP_Status_t status = Disp_ReadStatus();
 		HAL_Delay(100);
-		if (flag) {
-			const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
-			memset(txBuf, 0, sizeof(txBuf));
+		if (status == DISP_STATUS_IDLE) {
+			// Dispenser is idle
+		} else if (status == DISP_STATUS_START_BY_VOLUME) {
 
-			txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
-			RS485_Send(&dispenser, txBuf, txLen);
+		} else if (status == DISP_STATUS_START_BY_SALE) {
+
+		} else if (status == DISP_STATUS_STOPPED_FUELING) {
+
+		} else if (status == DISP_STATUS_BUSY) {
+
+		} else if (status == DISP_STATUS_NOZZLE_NOT_RETURNED) {
+
+		} else if (status == DISP_STATUS_STOPPED_FUELING) {
+
+		} else if (status == DISP_STATUS_AFTER_RESTART) {
+
+		} else if (status == DISP_STATUS_UNKNOWN) {
+//			if (++commFailCnt >= 3)
+//				commState = DISP_DISCONNECTED;
+//			else {
+//				commFailCnt = 0;
+//				commState = DISP_CONNECTED;
+//			}
+		} else if (status == DISP_RS485_SEND_ERROR) {
+
 		}
 
 		/* USER CODE END WHILE */
