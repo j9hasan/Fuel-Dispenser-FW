@@ -125,6 +125,38 @@ uint16_t Disp_BuildWrite(uint8_t addr, uint8_t origin, uint8_t dataLen,
 }
 
 /*
+ * converts an 8-bit decimal number (0–99) into 1-byte packed BCD.
+ * 45 -> 0x45
+ */
+static uint8_t Disp_DecToBCD(uint8_t val) {
+	return (uint8_t) (((val / 10) << 4) | (val % 10));
+}
+
+/*
+ * Build the 4.12 "read offline fueling record" frame.
+ * Function code 0x0C, 2-byte BCD record index (1..2000), e.g. record
+ * 2000 is sent as bytes 0x20 0x00.
+ *
+ * Master: A5 | addr | 0C | indexHiBCD | indexLoBCD | len | CRC8
+ */
+uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
+		uint8_t *txBuf) {
+	uint8_t hiBCD = Disp_DecToBCD((uint8_t) (recordIndex / 100));
+	uint8_t loBCD = Disp_DecToBCD((uint8_t) (recordIndex % 100));
+
+	txBuf[0] = DISP_HEADER;
+	txBuf[1] = addr;
+	txBuf[2] = DISP_FUNC_EVENT;
+	txBuf[3] = hiBCD;
+	txBuf[4] = loBCD;
+	txBuf[5] = len;
+
+	txBuf[6] = Disp_CRC8(&txBuf[1], 5);
+
+	return 7;
+}
+
+/*
  *
  * Data coming from uart DMA via idle detection interrupt
  * Packet format
@@ -201,6 +233,8 @@ uint8_t Disp_CRC8(uint8_t *buf, uint16_t len) {
  * Sends a DISP_STATUS command over RS485, waits up to 200 ms for a response,
  * validates the received packet, and returns the status byte from the reply.
  *
+ * Master: A5 | addr | 03 | 00 | len | CRC8
+ *
  * @return DISP_Status_t
  *         - Received dispenser status on success.
  *         - DISP_RS485_SEND_ERROR if transmission fails.
@@ -240,6 +274,8 @@ DISP_Status_t Disp_ReadStatus(void) {
  * Sends an offline data request, validates the response, and
  * returns the number of stored offline fueling records in decimal.
  *
+ * Master: A5 | addr | 80 | 0E | len | CRC8
+ *
  * @return Number of offline fueling records, or -1 on error/timeout.
  */
 
@@ -260,7 +296,7 @@ int16_t Disp_CheckOfflineFuelingCount(void) {
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {
-		if ((HAL_GetTick() - start) > 200)
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
 			return -2;
 	}
 	HAL_Delay(200);
@@ -274,5 +310,130 @@ int16_t Disp_CheckOfflineFuelingCount(void) {
 
 	return ((bcd >> 12) & 0x0F) * 1000 + ((bcd >> 8) & 0x0F) * 100
 			+ ((bcd >> 4) & 0x0F) * 10 + (bcd & 0x0F);
+}
+
+static uint8_t Disp_BCDToDec(uint8_t bcd) {
+	return ((bcd >> 4) * 10U) + (bcd & 0x0F);
+}
+
+DISP_OfflineRecord_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber) {
+	DISP_OfflineRecord_t record = { 0 };
+
+	uint8_t buf[16];
+	uint16_t txLen;
+
+	memset(buf, 0, sizeof(buf));
+
+	txLen = Disp_BuildEventRead(0x01, recordNumber, 0x08, buf);
+
+	dispenser.rxDone = false;
+	dispenser.rxLen = 0;
+
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+		return record;
+
+	uint32_t start = HAL_GetTick();
+
+	while (!dispenser.rxDone) {
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
+			return record;
+	}
+	HAL_Delay(200);
+
+	/* Expected response:
+	 * A5 01 0C 08 00 58 37 00 12 34 56 78 CRC
+	 */
+	/* Error response */
+	if (dispenser.rxBuf[2] == 0x83)
+		return record;
+
+	if (dispenser.rxLen < 12)
+		return record;
+
+	/* Error response:
+	 * A5 01 8C error CRC
+	 */
+	if (dispenser.rxBuf[2] == 0x8C)
+		return record;
+
+	if (dispenser.rxBuf[2] != DISP_FUNC_EVENT)
+		return record;
+
+	/* Decode BCD data */
+	uint32_t volume = Disp_BCDToDec(dispenser.rxBuf[4]) * 10000
+			+ Disp_BCDToDec(dispenser.rxBuf[5]) * 100
+			+ Disp_BCDToDec(dispenser.rxBuf[6]);
+
+	uint64_t sale = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[7]) * 100000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[8]) * 1000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[9]) * 10000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[10]) * 100ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[11]);
+
+	record.volume = volume / 100.0f;
+	record.sale = sale / 100.0f;
+	record.valid = true;
+
+	return record;
+}
+
+DISP_Totalizer_t Disp_GetAccumulatedData(void) {
+	DISP_Totalizer_t total = { 0 };
+
+	uint8_t buf[16];
+	uint16_t txLen;
+
+	memset(buf, 0, sizeof(buf));
+
+	/* Read function 0x03, address 0x60, length 0x0C */
+	txLen = Disp_BuildRead(0x01, 0x60, 0x0C, buf);
+
+	dispenser.rxDone = false;
+	dispenser.rxLen = 0;
+
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+		return total;
+
+	uint32_t start = HAL_GetTick();
+
+	while (!dispenser.rxDone) {
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
+			return total;
+	}
+
+	/* Error response */
+	if (dispenser.rxBuf[2] == 0x83)
+		return total;
+
+	/* Expected response:
+	 * A5 01 03 0C
+	 * 00 00 00 58 37
+	 * 00 00 00 12 34 56 78
+	 * CRC
+	 */
+	if (dispenser.rxLen < 17)
+		return total;
+
+	uint64_t volume = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[4])
+			* 100000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[5]) * 1000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[6]) * 10000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[7]) * 100ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[8]);
+
+	uint64_t sale = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[9])
+			* 1000000000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[10]) * 10000000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[11]) * 100000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[12]) * 1000000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[13]) * 10000ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[14]) * 100ULL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[15]);
+
+	total.volume = volume / 100.0f;
+	total.sale = sale / 100.0f;
+	total.valid = true;
+
+	return total;
 }
 

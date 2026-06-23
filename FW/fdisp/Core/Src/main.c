@@ -63,7 +63,7 @@ const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
 const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
 DISP_Status_t status = -1;
 DISP_Status_t status_init = -1;
-int16_t fueling_count = 0;
+int16_t offline_record_count = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -110,33 +110,6 @@ uint32_t ParseBCD(uint8_t *buf, uint8_t bytes) {
 	return value;
 }
 
-//static uint8_t Disp_DecToBCD(uint8_t val) {
-//	return (uint8_t) (((val / 10) << 4) | (val % 10));
-//}
-
-/*
- * Build the 4.12 "read offline fueling record" frame.
- * Function code 0x0C, 2-byte BCD record index (1..2000), e.g. record
- * 2000 is sent as bytes 0x20 0x00.
- *
- * Master: A5 | addr | 0C | indexHiBCD | indexLoBCD | len | CRC8
- */
-//static uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex,
-//		uint8_t len, uint8_t *txBuf) {
-//	uint8_t hiBCD = Disp_DecToBCD((uint8_t) (recordIndex / 100));
-//	uint8_t loBCD = Disp_DecToBCD((uint8_t) (recordIndex % 100));
-//
-//	txBuf[0] = DISP_HEADER;
-//	txBuf[1] = addr;
-//	txBuf[2] = DISP_FUNC_EVENT;
-//	txBuf[3] = hiBCD;
-//	txBuf[4] = loBCD;
-//	txBuf[5] = len;
-//
-//	txBuf[6] = Disp_CRC8(&txBuf[1], 5);
-//
-//	return 7;
-//}
 static uint16_t Disp_BuildCustomCommand(const uint8_t *payload,
 		uint8_t payloadLen, uint8_t *txBuf) {
 	txBuf[0] = DISP_HEADER;      // 0xA5
@@ -191,24 +164,31 @@ int main(void) {
 
 	HAL_Delay(200); // let the bus settle before the first command
 
-	// read status
-
-//	uint16_t txLen = Disp_BuildCustomCommand(cmd_status, sizeof(cmd_status),
-//			txBuf);
-//	RS485_Send(&dispenser, txBuf, txLen);
-//
-//	memset(txBuf, 0, sizeof(txBuf));
-
-	status_init = Disp_ReadStatus();
-
+	status_init = Disp_ReadStatus(); 	// read status
 //	txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
 //	RS485_Send(&dispenser, txBuf, txLen);
 	HAL_Delay(200);
-	// Check offline fueling count
-	fueling_count = Disp_CheckOfflineFuelingCount();
+	offline_record_count = Disp_CheckOfflineFuelingCount(); // Check offline fueling count
 	HAL_Delay(200);
+	if (offline_record_count == 0) {
+		// No offline transaction, Proceed
+	} else if (offline_record_count < 0) {
+		// Fueling count parse error
+	} else {
+		// Retrieve missed fueling information while offline
+		for (uint8_t k = 1; k <= offline_record_count; ++k) {
+			DISP_OfflineRecord_t offline_rec;
+			offline_rec = Disp_GetOfflineFuelingRecord(k);
+		}
+		// Create a json obj and send it to cloud
+	}
+	// Get accumulated data
+	DISP_Totalizer_t total = Disp_GetAccumulatedData();
 
-	// Solid LED = handshake finished (check USART3 terminal for the log)
+	if (total.valid) {
+//		printf("Accumulated volume : %.2f L\r\n", total.volume);
+//		printf("Accumulated sale   : %.2f\r\n", total.sale);
+	}
 	HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
 
 	/* USER CODE END 2 */
@@ -238,12 +218,7 @@ int main(void) {
 		} else if (status == DISP_STATUS_AFTER_RESTART) {
 
 		} else if (status == DISP_STATUS_UNKNOWN) {
-//			if (++commFailCnt >= 3)
-//				commState = DISP_DISCONNECTED;
-//			else {
-//				commFailCnt = 0;
-//				commState = DISP_CONNECTED;
-//			}
+
 		} else if (status == DISP_RS485_SEND_ERROR) {
 
 		}

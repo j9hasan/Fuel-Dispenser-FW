@@ -16,6 +16,7 @@
 #define RS485_RX_BUFFER_SIZE      24
 #define RS485_TX_TIMEOUT_MS       100
 #define RS485_RX_TIMEOUT_MS       200
+#define RX_DONE_ADDITIONAL_DELAY 100
 
 /* Device mode */
 
@@ -24,6 +25,19 @@
 
 /* Protocol */
 #define DISP_HEADER               0xA5
+
+typedef struct
+{
+    float volume;
+    float sale;
+    bool valid;
+} DISP_Totalizer_t;
+
+typedef struct {
+	float volume;     // Liters
+	float sale;       // Money amount
+	bool valid;
+} DISP_OfflineRecord_t ;
 
 /* Function codes */
 typedef enum {
@@ -119,4 +133,8 @@ DISP_Status_t Disp_ReadStatus(void);
 /* Get offline records */
 int16_t Disp_CheckOfflineFuelingCount(void);
 
+uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
+		uint8_t *txBuf);
+DISP_OfflineRecord_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber);
+DISP_Totalizer_t Disp_GetAccumulatedData(void);
 #endif /* INC_GENUINE_RS485_H_ */
