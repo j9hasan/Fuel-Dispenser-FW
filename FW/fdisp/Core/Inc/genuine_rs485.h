@@ -16,7 +16,7 @@
 #define RS485_RX_BUFFER_SIZE      24
 #define RS485_TX_TIMEOUT_MS       100
 #define RS485_RX_TIMEOUT_MS       200
-#define RX_DONE_ADDITIONAL_DELAY 100
+#define RX_DONE_ADDITIONAL_DELAY 30
 
 /* Device mode */
 
@@ -27,16 +27,10 @@
 #define DISP_HEADER               0xA5
 
 typedef struct {
-	float volume;
-	float sale;
-	bool valid;
-} DISP_Totalizer_t;
-
-typedef struct {
 	float volume;     // Liters
 	float sale;       // Money amount
 	bool valid;
-} DISP_OfflineRecord_t;
+} DISP_OfflineRecord_t, DISP_Totalizer_t;
 
 /* Function codes */
 typedef enum {
@@ -71,7 +65,8 @@ typedef enum {
 	DISP_STATUS_NOZZLE_NOT_RETURNED = 0x05,
 	DISP_STATUS_AFTER_RESTART = 0x06, // Nozzle offline
 	DISP_STATUS_UNKNOWN = 0xFF,
-	DISP_RS485_SEND_ERROR = 0xFE
+	DISP_RS485_SEND_ERROR = 0xFE,
+	DISP_START_REC_ERROR = 0xFD
 
 } DISP_Status_t;
 
@@ -85,7 +80,7 @@ typedef enum {
 	DISP_DEVICE_OFFLINE = 0x06,
 	DISP_CRC_ERROR = 0x07,
 	DISP_TX_ERROR = 0X08,
-	DISP_RX_ERROR = 0x09,
+	DISP_RX_TIMEOUT = 0x09,
 	DISP_FULL_FRAME_NOT_REC = 0x10,
 	DISP_NULL_PTR = 0x11
 } DISP_ErrorCode_t;
@@ -97,7 +92,7 @@ typedef struct {
 	uint16_t dePin;
 
 	uint8_t rxBuf[RS485_RX_BUFFER_SIZE];
-	uint16_t rxLen;
+	volatile uint16_t rxLen;
 	volatile bool rxDone;
 
 } RS485_Handle_t;
@@ -111,7 +106,7 @@ void RS485_Init(RS485_Handle_t *h, UART_HandleTypeDef *uart,
 /* TX/RX */
 HAL_StatusTypeDef RS485_Send(RS485_Handle_t *h, uint8_t *data, uint16_t len);
 
-void RS485_StartReceive(RS485_Handle_t *h);
+HAL_StatusTypeDef RS485_StartReceive(RS485_Handle_t *h);
 
 void RS485_RxCallback(RS485_Handle_t *h);
 

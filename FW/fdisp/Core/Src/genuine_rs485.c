@@ -26,7 +26,7 @@ void RS485_Init(RS485_Handle_t *h, UART_HandleTypeDef *uart,
 
 	RS485_RXEnable(h);
 
-	RS485_StartReceive(h);
+//	RS485_StartReceive(h);
 }
 
 HAL_StatusTypeDef RS485_Send(RS485_Handle_t *h, uint8_t *data, uint16_t len) {
@@ -47,13 +47,22 @@ HAL_StatusTypeDef RS485_Send(RS485_Handle_t *h, uint8_t *data, uint16_t len) {
 	return ret;
 }
 
-void RS485_StartReceive(RS485_Handle_t *h) {
+/* This This arms the UART/DMA and start receiving for first time*/
 
-	HAL_UARTEx_ReceiveToIdle_DMA(h->uart, h->rxBuf,
+HAL_StatusTypeDef RS485_StartReceive(RS485_Handle_t *h) {
+	h->rxDone = false;
+	h->rxLen = 0;
+
+	HAL_StatusTypeDef ret = HAL_UARTEx_ReceiveToIdle_DMA(h->uart, h->rxBuf,
 	RS485_RX_BUFFER_SIZE);
 
-	__HAL_DMA_DISABLE_IT(h->uart->hdmarx, DMA_IT_HT);
+	if (ret == HAL_OK) {
+		__HAL_DMA_DISABLE_IT(h->uart->hdmarx, DMA_IT_HT);
+	}
+
+	return ret;
 }
+
 /*
  * Set device mode
  */
@@ -77,6 +86,21 @@ bool Disp_SetMode(uint8_t mode) {
 		return false;
 
 	return true;
+}
+/*
+ * This functions builds costom read/write command
+ * const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
+ * const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
+ */
+uint16_t Disp_BuildCustomCommand(const uint8_t *payload, uint8_t payloadLen,
+		uint8_t *txBuf) {
+	txBuf[0] = DISP_HEADER;      // 0xA5
+
+	memcpy(&txBuf[1], payload, payloadLen);
+
+	txBuf[payloadLen + 1] = Disp_CRC8(&txBuf[1], payloadLen);
+
+	return payloadLen + 2;
 }
 
 /*
@@ -249,18 +273,24 @@ DISP_Status_t Disp_ReadStatus(void) {
 
 	txLen = Disp_BuildRead(0x01, DISP_STATUS, 0x01, buf);
 
-	dispenser.rxDone = false;
-	dispenser.rxLen = 0;
+	if (RS485_StartReceive(&dispenser) != HAL_OK)
+		return DISP_START_REC_ERROR;
 
-	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK) {
+		HAL_UART_DMAStop(dispenser.uart);
 		return DISP_RS485_SEND_ERROR;
+	}
 
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {
-		if ((HAL_GetTick() - start) > 200)
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY) {
+			HAL_UART_DMAStop(dispenser.uart);
 			return DISP_STATUS_UNKNOWN;
+		}
 	}
+
+	HAL_UART_DMAStop(dispenser.uart);
 
 	if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen))
 		return DISP_STATUS_UNKNOWN;
@@ -287,24 +317,29 @@ int16_t Disp_CheckOfflineFuelingCount(void) {
 
 	txLen = Disp_BuildRead(0x01, DISP_OFFLINE, 0x0E, buf);
 
-	dispenser.rxDone = false;
-	dispenser.rxLen = 0;
-
-	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+	if (RS485_StartReceive(&dispenser) != HAL_OK)
 		return -1;
+
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK) {
+		HAL_UART_DMAStop(dispenser.uart);
+		return -2;
+	}
 
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {
-		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
-			return -2;
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY) {
+			HAL_UART_DMAStop(dispenser.uart);
+			return -3;
+		}
 	}
-	HAL_Delay(200);
+	HAL_UART_DMAStop(dispenser.uart);
+	HAL_Delay(1);
 	if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen))
-		return -3;
+		return -4;
 
 	if (dispenser.rxLen < 18)
-		return -4;
+		return -5;
 
 	uint16_t bcd = ((uint16_t) dispenser.rxBuf[16] << 8) | dispenser.rxBuf[17];
 
@@ -326,19 +361,25 @@ DISP_OfflineRecord_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber) {
 
 	txLen = Disp_BuildEventRead(0x01, recordNumber, 0x08, buf);
 
-	dispenser.rxDone = false;
-	dispenser.rxLen = 0;
-
-	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+	if (RS485_StartReceive(&dispenser) != HAL_OK)
 		return record;
+
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK) {
+		HAL_UART_DMAStop(dispenser.uart);
+		return record;
+	}
 
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {
-		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY) {
+			HAL_UART_DMAStop(dispenser.uart);
 			return record;
+		}
 	}
-	HAL_Delay(200);
+	HAL_UART_DMAStop(dispenser.uart);
+
+	HAL_Delay(1);
 
 	/* Expected response:
 	 * A5 01 0C 08 00 58 37 00 12 34 56 78 CRC
@@ -393,18 +434,22 @@ DISP_ErrorCode_t Disp_GetAccumulatedData(float *volume, float *sale) {
 	/* Read function 0x03, address 0x60, length 0x0C */
 	txLen = Disp_BuildRead(0x01, 0x60, 0x0C, buf);
 
-	dispenser.rxDone = false;
-	dispenser.rxLen = 0;
+	RS485_StartReceive(&dispenser);
 
-	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK) {
+		HAL_UART_DMAStop(dispenser.uart);
 		return DISP_TX_ERROR;
+	}
 
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {
-		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
-			return DISP_RX_ERROR;
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY) {
+			HAL_UART_DMAStop(dispenser.uart);
+			return DISP_RX_TIMEOUT;
+		}
 	}
+	HAL_UART_DMAStop(dispenser.uart);
 
 	/* Error response */
 	if (dispenser.rxBuf[2] == 0x83)
@@ -456,18 +501,23 @@ DISP_ErrorCode_t Disp_GetDataWhenStopWorking(float *volume, float *sale) {
 	/* Read function 0x03, address 0x30, length 0x08 */
 	txLen = Disp_BuildRead(0x01, DISP_CURRENT, 0x08, buf);
 
-	dispenser.rxDone = false;
-	dispenser.rxLen = 0;
+	RS485_StartReceive(&dispenser);
 
-	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK) {
+		HAL_UART_DMAStop(dispenser.uart);
 		return DISP_TX_ERROR;
+	}
 
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {
-		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
-			return DISP_RX_ERROR;
+		if ((HAL_GetTick() - start) > 30) {
+			HAL_UART_DMAStop(dispenser.uart);
+			return DISP_STATUS_UNKNOWN;
+		}
 	}
+
+	HAL_UART_DMAStop(dispenser.uart);
 
 	/* Error response */
 	if (dispenser.rxBuf[2] == 0x83)

@@ -58,11 +58,18 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 uint8_t txBuf[16]; // Buffer for storing command to be sent
 
-const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
-const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
+DISP_Status_t status = DISP_STATUS_UNKNOWN;
+DISP_Status_t status_init = DISP_STATUS_UNKNOWN;
 static DISP_Status_t prevStatus = DISP_STATUS_UNKNOWN;
-DISP_Status_t status;
+
 int16_t offline_record_count = 0;
+DISP_OfflineRecord_t offline_rec = { 0 };
+
+float vol_stopped = 0;
+float sale_stopped = 0;
+float vol_accumulated = 0;
+float sale_accumulated = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,40 +93,9 @@ extern uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 	if (huart == &huart1) {
 		dispenser.rxLen = Size;
-
 		dispenser.rxDone = true;
-
-		HAL_UARTEx_ReceiveToIdle_DMA(&huart1, dispenser.rxBuf,
-		RS485_RX_BUFFER_SIZE);
 	}
 }
-
-uint8_t BCD_To_Dec(uint8_t bcd) {
-	return ((bcd >> 4) * 10) + (bcd & 0x0F);
-}
-
-uint32_t ParseBCD(uint8_t *buf, uint8_t bytes) {
-	uint32_t value = 0;
-
-	for (uint8_t i = 0; i < bytes; i++) {
-		value *= 100;
-		value += BCD_To_Dec(buf[i]);
-	}
-
-	return value;
-}
-
-static uint16_t Disp_BuildCustomCommand(const uint8_t *payload,
-		uint8_t payloadLen, uint8_t *txBuf) {
-	txBuf[0] = DISP_HEADER;      // 0xA5
-
-	memcpy(&txBuf[1], payload, payloadLen);
-
-	txBuf[payloadLen + 1] = Disp_CRC8(&txBuf[1], payloadLen);
-
-	return payloadLen + 2;
-}
-
 /* USER CODE END 0 */
 
 /**
@@ -163,20 +139,19 @@ int main(void) {
 
 	HAL_Delay(200); // let the bus settle before the first command
 
-	DISP_Status_t status_init = Disp_ReadStatus(); 	// read status
-//	txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
-//	RS485_Send(&dispenser, txBuf, txLen);
+	status_init = Disp_ReadStatus(); 	// read status
+
 	HAL_Delay(200);
 	offline_record_count = Disp_CheckOfflineFuelingCount(); // Check offline fueling count
 	HAL_Delay(200);
+
 	if (offline_record_count == 0) {
 		// No offline transaction, Proceed
 	} else if (offline_record_count < 0) {
 		// Fueling count parse error
 	} else {
 		// Retrieve missed fueling information while offline
-		for (uint8_t k = 1; k <= offline_record_count; ++k) {
-			DISP_OfflineRecord_t offline_rec;
+		for (int k = offline_record_count; k > 0; k--) {
 			offline_rec = Disp_GetOfflineFuelingRecord(k);
 		}
 		// Create a json obj and send it to cloud
@@ -193,25 +168,21 @@ int main(void) {
 		// Remark on the flow chart: POS checks status every 100 ms.
 
 		status = Disp_ReadStatus();
-
+		HAL_Delay(100);
 		if ((status == DISP_STATUS_STOPPED_FUELING)
 				&& (prevStatus != DISP_STATUS_STOPPED_FUELING)) {
 			/* Fueling just finished */
 
-			float vol_stopped;
-			float sale_stopped;
-
 			if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
 					== DISP_OK) {
 				// Process transaction once
+				HAL_Delay(100);
 			}
-
-			float vol_accumulated;
-			float sale_accumulated;
 
 			if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
 					== DISP_OK) {
 				// Process accumulated totals
+				HAL_Delay(100);
 			}
 		}
 
@@ -374,9 +345,6 @@ static void MX_DMA_Init(void) {
 	/* DMA1_Stream0_IRQn interrupt configuration */
 	HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
 	HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-	/* DMAMUX1_OVR_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(DMAMUX1_OVR_IRQn, 0, 0);
-	HAL_NVIC_EnableIRQ(DMAMUX1_OVR_IRQn);
 
 }
 
