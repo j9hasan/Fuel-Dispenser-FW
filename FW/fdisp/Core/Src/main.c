@@ -56,13 +56,12 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
-bool flag = 0;
 uint8_t txBuf[16]; // Buffer for storing command to be sent
-// Commands without Header A5 and CRC Byte
+
 const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
 const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
-DISP_Status_t status = -1;
-DISP_Status_t status_init = -1;
+static DISP_Status_t prevStatus = DISP_STATUS_UNKNOWN;
+DISP_Status_t status;
 int16_t offline_record_count = 0;
 /* USER CODE END PV */
 
@@ -164,7 +163,7 @@ int main(void) {
 
 	HAL_Delay(200); // let the bus settle before the first command
 
-	status_init = Disp_ReadStatus(); 	// read status
+	DISP_Status_t status_init = Disp_ReadStatus(); 	// read status
 //	txLen = Disp_BuildCustomCommand(cmd, sizeof(cmd), txBuf);
 //	RS485_Send(&dispenser, txBuf, txLen);
 	HAL_Delay(200);
@@ -182,13 +181,7 @@ int main(void) {
 		}
 		// Create a json obj and send it to cloud
 	}
-	// Get accumulated data
-	DISP_Totalizer_t total = Disp_GetAccumulatedData();
 
-	if (total.valid) {
-//		printf("Accumulated volume : %.2f L\r\n", total.volume);
-//		printf("Accumulated sale   : %.2f\r\n", total.sale);
-	}
 	HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
 
 	/* USER CODE END 2 */
@@ -200,29 +193,30 @@ int main(void) {
 		// Remark on the flow chart: POS checks status every 100 ms.
 
 		status = Disp_ReadStatus();
-		HAL_Delay(100);
-		if (status == DISP_STATUS_IDLE) {
-			// Dispenser is idle
-		} else if (status == DISP_STATUS_START_BY_VOLUME) {
 
-		} else if (status == DISP_STATUS_START_BY_SALE) {
+		if ((status == DISP_STATUS_STOPPED_FUELING)
+				&& (prevStatus != DISP_STATUS_STOPPED_FUELING)) {
+			/* Fueling just finished */
 
-		} else if (status == DISP_STATUS_STOPPED_FUELING) {
+			float vol_stopped;
+			float sale_stopped;
 
-		} else if (status == DISP_STATUS_BUSY) {
+			if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
+					== DISP_OK) {
+				// Process transaction once
+			}
 
-		} else if (status == DISP_STATUS_NOZZLE_NOT_RETURNED) {
+			float vol_accumulated;
+			float sale_accumulated;
 
-		} else if (status == DISP_STATUS_STOPPED_FUELING) {
-
-		} else if (status == DISP_STATUS_AFTER_RESTART) {
-
-		} else if (status == DISP_STATUS_UNKNOWN) {
-
-		} else if (status == DISP_RS485_SEND_ERROR) {
-
+			if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
+					== DISP_OK) {
+				// Process accumulated totals
+			}
 		}
 
+		/* Save current status for next iteration */
+		prevStatus = status;
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */

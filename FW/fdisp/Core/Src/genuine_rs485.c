@@ -377,11 +377,16 @@ DISP_OfflineRecord_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber) {
 	return record;
 }
 
-DISP_Totalizer_t Disp_GetAccumulatedData(void) {
-	DISP_Totalizer_t total = { 0 };
+DISP_ErrorCode_t Disp_GetAccumulatedData(float *volume, float *sale) {
 
 	uint8_t buf[16];
 	uint16_t txLen;
+
+	if (volume == NULL || sale == NULL)
+		return DISP_WRONG_CMD;
+
+	*volume = 0.0f;
+	*sale = 0.0f;
 
 	memset(buf, 0, sizeof(buf));
 
@@ -392,18 +397,18 @@ DISP_Totalizer_t Disp_GetAccumulatedData(void) {
 	dispenser.rxLen = 0;
 
 	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
-		return total;
+		return DISP_TX_ERROR;
 
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {
 		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
-			return total;
+			return DISP_RX_ERROR;
 	}
 
 	/* Error response */
 	if (dispenser.rxBuf[2] == 0x83)
-		return total;
+		return (DISP_ErrorCode_t) dispenser.rxBuf[4];
 
 	/* Expected response:
 	 * A5 01 03 0C
@@ -412,16 +417,15 @@ DISP_Totalizer_t Disp_GetAccumulatedData(void) {
 	 * CRC
 	 */
 	if (dispenser.rxLen < 17)
-		return total;
+		return DISP_FULL_FRAME_NOT_REC;
 
-	uint64_t volume = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[4])
-			* 100000000ULL
+	uint64_t vol = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[4]) * 100000000ULL
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[5]) * 1000000ULL
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[6]) * 10000ULL
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[7]) * 100ULL
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[8]);
 
-	uint64_t sale = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[9])
+	uint64_t sal = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[9])
 			* 1000000000000ULL
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[10]) * 10000000000ULL
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[11]) * 100000000ULL
@@ -430,10 +434,66 @@ DISP_Totalizer_t Disp_GetAccumulatedData(void) {
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[14]) * 100ULL
 			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[15]);
 
-	total.volume = volume / 100.0f;
-	total.sale = sale / 100.0f;
-	total.valid = true;
+	*volume = vol / 100.0f;
+	*sale = sal / 100.0f;
 
-	return total;
+	return DISP_OK;
+}
+
+DISP_ErrorCode_t Disp_GetDataWhenStopWorking(float *volume, float *sale) {
+
+	uint8_t buf[16];
+	uint16_t txLen;
+
+	if (volume == NULL || sale == NULL)
+		return DISP_NULL_PTR;
+
+	*volume = 0.0f;
+	*sale = 0.0f;
+
+	memset(buf, 0, sizeof(buf));
+
+	/* Read function 0x03, address 0x30, length 0x08 */
+	txLen = Disp_BuildRead(0x01, DISP_CURRENT, 0x08, buf);
+
+	dispenser.rxDone = false;
+	dispenser.rxLen = 0;
+
+	if (RS485_Send(&dispenser, buf, txLen) != HAL_OK)
+		return DISP_TX_ERROR;
+
+	uint32_t start = HAL_GetTick();
+
+	while (!dispenser.rxDone) {
+		if ((HAL_GetTick() - start) > RX_DONE_ADDITIONAL_DELAY)
+			return DISP_RX_ERROR;
+	}
+
+	/* Error response */
+	if (dispenser.rxBuf[2] == 0x83)
+		return (DISP_ErrorCode_t) dispenser.rxBuf[4];
+
+	/* Expected response:
+	 * A5 01 03 0C
+	 * 00 00 00 58 37
+	 * 00 00 00 12 34 56 78
+	 * CRC
+	 */
+	if (dispenser.rxLen < 13)
+		return DISP_FULL_FRAME_NOT_REC;
+
+	uint32_t vol = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[4]) * 10000UL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[5]) * 100UL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[6]);
+
+	uint32_t sal = (uint64_t) Disp_BCDToDec(dispenser.rxBuf[8]) * 1000000UL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[9]) * 10000UL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[10]) * 100UL
+			+ (uint64_t) Disp_BCDToDec(dispenser.rxBuf[11]);
+
+	*volume = vol / 100.0f;
+	*sale = sal / 100.0f;
+
+	return DISP_OK;
 }
 

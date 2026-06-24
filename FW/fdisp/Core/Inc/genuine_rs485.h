@@ -26,18 +26,17 @@
 /* Protocol */
 #define DISP_HEADER               0xA5
 
-typedef struct
-{
-    float volume;
-    float sale;
-    bool valid;
+typedef struct {
+	float volume;
+	float sale;
+	bool valid;
 } DISP_Totalizer_t;
 
 typedef struct {
 	float volume;     // Liters
 	float sale;       // Money amount
 	bool valid;
-} DISP_OfflineRecord_t ;
+} DISP_OfflineRecord_t;
 
 /* Function codes */
 typedef enum {
@@ -78,13 +77,17 @@ typedef enum {
 
 /* Error codes returned by device when 0x83 happens*/
 typedef enum {
+	DISP_OK = 0x00,
 	DISP_WRONG_CMD = 0x01,
 	DISP_DEVICE_STOP_WORKING = 0x03,
 	DISP_RESEND_COMMAND = 0x04,
 	DISP_DEVICE_BUSY = 0x05,
 	DISP_DEVICE_OFFLINE = 0x06,
-	DISP_CRC_ERROR = 0x07
-
+	DISP_CRC_ERROR = 0x07,
+	DISP_TX_ERROR = 0X08,
+	DISP_RX_ERROR = 0x09,
+	DISP_FULL_FRAME_NOT_REC = 0x10,
+	DISP_NULL_PTR = 0x11
 } DISP_ErrorCode_t;
 
 typedef struct {
@@ -136,5 +139,6 @@ int16_t Disp_CheckOfflineFuelingCount(void);
 uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
 		uint8_t *txBuf);
 DISP_OfflineRecord_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber);
-DISP_Totalizer_t Disp_GetAccumulatedData(void);
+DISP_ErrorCode_t Disp_GetAccumulatedData(float *volume, float *sale);
+DISP_ErrorCode_t Disp_GetDataWhenStopWorking(float *volume, float *sale);
 #endif /* INC_GENUINE_RS485_H_ */
