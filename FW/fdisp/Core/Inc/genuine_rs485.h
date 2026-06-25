@@ -15,8 +15,7 @@
 /* Configuration */
 #define RS485_RX_BUFFER_SIZE      24
 #define RS485_TX_TIMEOUT_MS       100
-#define RS485_RX_TIMEOUT_MS       200
-#define RX_DONE_ADDITIONAL_DELAY 30
+#define RS485_RX_TIMEOUT_MS 50
 
 /* Device mode */
 
@@ -26,36 +25,44 @@
 /* Protocol */
 #define DISP_HEADER               0xA5
 
+/* Function codes */
+#define DISP_FUNC_READ 0x03U
+#define	DISP_FUNC_WRITE  0x10U
+#define	DISP_FUNC_EVENT  0x0CU
+
+/* Data Length */
+#define DISP_LEN_REALTIME          0x08U
+#define DISP_LEN_STOPPED           0x08U
+#define DISP_LEN_STATUS        0x01U
+#define DISP_LEN_SET_UNIT_PRICE    0x03U
+#define DISP_LEN_CHECK_UNIT_PRICE  0x04U
+#define DISP_LEN_ACCUMULATED_SUM  0x0CU
+#define DISP_LEN_OFFLINE_COUNT  0x0EU
+#define DISP_LEN_OFFLINE_DATA  0x08U
+
 typedef struct {
 	float volume;     // Liters
 	float sale;       // Money amount
 	bool valid;
 } DISP_OfflineRecord_t, DISP_Totalizer_t;
 
-/* Function codes */
-typedef enum {
-	DISP_FUNC_READ = 0x03, DISP_FUNC_WRITE = 0x10, DISP_FUNC_EVENT = 0x0C
-
-} DispFunction_t;
-
 /* Origin address */
 typedef enum {
-	DISP_STATUS = 0x00,
-	DISP_PRESET_LITER = 0x10,
-	DISP_PRESET_SALE = 0x14,
-	DISP_REALTIME = 0x20,
-	DISP_CURRENT = 0x30, //Stopped data
-	DISP_PRICE = 0x55,
-	DISP_MODE = 0x5A,
-	DISP_TOTAL = 0x60,
-	DISP_CLASS_TOTAL = 0x70,
-	DISP_OFFLINE = 0x80,
-	DISP_READ_WRONG_CODE = 0x83,
-	DISP_WRITE_WRONG_CODE = 0x90
-
+	DISP_ORIGIN_STATUS = 0x00,
+	DISP_ORIGIN_PRESET_LITER = 0x10,
+	DISP_ORIGIN_PRESET_SALE = 0x14,
+	DISP_ORIGIN_REALTIME = 0x20,
+	DISP_ORIGIN_CURRENT = 0x30, //Stopped data
+	DISP_ORIGIN_PRICE = 0x55,
+	DISP_ORIGIN_MODE = 0x5A,
+	DISP_ORIGIN_TOTAL = 0x60,
+	DISP_ORIGIN_CLASS_TOTAL = 0x70,
+	DISP_ORIGIN_OFFLINE = 0x80,
+	DISP_ORIGIN_READ_WRONG_CODE = 0x83,
+	DISP_ORIGIN_WRITE_WRONG_CODE = 0x90
 } Disp_Origin_t;
 
-/*Disp status response*/
+/* Disp status response */
 typedef enum {
 	DISP_STATUS_IDLE = 0x00, // Nozzle idle
 	DISP_STATUS_START_BY_VOLUME = 0x01, // start as litre
@@ -63,26 +70,26 @@ typedef enum {
 	DISP_STATUS_STOPPED_FUELING = 0x03, // Status after Stop fueling
 	DISP_STATUS_BUSY = 0x04, // Fueling
 	DISP_STATUS_NOZZLE_NOT_RETURNED = 0x05,
-	DISP_STATUS_AFTER_RESTART = 0x06, // Nozzle offline
-	DISP_STATUS_UNKNOWN = 0xFF,
-	DISP_RS485_SEND_ERROR = 0xFE,
-	DISP_START_REC_ERROR = 0xFD
-
+	DISP_STATUS_AFTER_RESTART = 0x06 // Nozzle offline
 } DISP_Status_t;
 
-/* Error codes returned by device when 0x83 happens*/
+/* Error codes returned by device when 0x8X happens*/
 typedef enum {
 	DISP_OK = 0x00,
+	/* Device errors (0x8X response) */
 	DISP_WRONG_CMD = 0x01,
 	DISP_DEVICE_STOP_WORKING = 0x03,
 	DISP_RESEND_COMMAND = 0x04,
 	DISP_DEVICE_BUSY = 0x05,
 	DISP_DEVICE_OFFLINE = 0x06,
 	DISP_CRC_ERROR = 0x07,
-	DISP_TX_ERROR = 0X08,
-	DISP_RX_TIMEOUT = 0x09,
-	DISP_FULL_FRAME_NOT_REC = 0x10,
-	DISP_NULL_PTR = 0x11
+
+	/* Local communication errors */
+	DISP_RS485_SEND_ERROR = 0x80,
+	DISP_RS485_RX_TIMEOUT = 0x81,
+	DISP_RS485_FRAME_ERROR = 0x82,
+	DISP_RS485_START_REC_ERROR = 0x83,
+	DISP_RS485_TRANSACTION_ERROR = 0x84
 } DISP_ErrorCode_t;
 
 typedef struct {
@@ -127,13 +134,14 @@ uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
 bool Disp_SetMode(uint8_t mode);
 
 /* Get device status */
-DISP_Status_t Disp_ReadStatus(void);
+DISP_ErrorCode_t Disp_ReadStatus(DISP_Status_t *status);
 /* Get offline records */
-int16_t Disp_CheckOfflineFuelingCount(void);
+DISP_ErrorCode_t Disp_CheckOfflineFuelingCount(int16_t *count);
 
 uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
 		uint8_t *txBuf);
-DISP_OfflineRecord_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber);
+DISP_ErrorCode_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber,
+		float *volume, float *sale);
 DISP_ErrorCode_t Disp_GetAccumulatedData(float *volume, float *sale);
 DISP_ErrorCode_t Disp_GetDataWhenStopWorking(float *volume, float *sale);
 #endif /* INC_GENUINE_RS485_H_ */

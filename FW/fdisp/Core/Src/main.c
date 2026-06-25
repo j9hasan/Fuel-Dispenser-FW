@@ -58,9 +58,9 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 uint8_t txBuf[16]; // Buffer for storing command to be sent
 
-DISP_Status_t status = DISP_STATUS_UNKNOWN;
-DISP_Status_t status_init = DISP_STATUS_UNKNOWN;
-static DISP_Status_t prevStatus = DISP_STATUS_UNKNOWN;
+DISP_Status_t status = DISP_STATUS_IDLE;
+static DISP_Status_t prevStatus = DISP_STATUS_IDLE;
+DISP_ErrorCode_t err;
 
 int16_t offline_record_count = 0;
 DISP_OfflineRecord_t offline_rec = { 0 };
@@ -69,6 +69,8 @@ float vol_stopped = 0;
 float sale_stopped = 0;
 float vol_accumulated = 0;
 float sale_accumulated = 0;
+float vol_offline = 0;
+float sale_offline = 0;
 
 /* USER CODE END PV */
 
@@ -139,22 +141,33 @@ int main(void) {
 
 	HAL_Delay(200); // let the bus settle before the first command
 
-	status_init = Disp_ReadStatus(); 	// read status
+	status = Disp_ReadStatus(&status); 	// read status
 
 	HAL_Delay(200);
-	offline_record_count = Disp_CheckOfflineFuelingCount(); // Check offline fueling count
-	HAL_Delay(200);
 
-	if (offline_record_count == 0) {
-		// No offline transaction, Proceed
-	} else if (offline_record_count < 0) {
-		// Fueling count parse error
-	} else {
-		// Retrieve missed fueling information while offline
-		for (int k = offline_record_count; k > 0; k--) {
-			offline_rec = Disp_GetOfflineFuelingRecord(k);
+	Disp_SetMode(DISP_MODE_CONTROL);
+
+	if (Disp_CheckOfflineFuelingCount(&offline_record_count) == DISP_OK) {
+		// Use fuelingCount
+		HAL_Delay(200);
+
+		if (offline_record_count == 0) {
+			// No offline transaction, Proceed
+		} else if (offline_record_count < 0) {
+			// Fueling count parse error
+		} else {
+			// Retrieve missed fueling information while offline
+
+			for (int k = offline_record_count; k > 0; k--) {
+				if (Disp_GetOfflineFuelingRecord(k, &vol_offline, &sale_offline)
+						== DISP_OK) {
+
+				} else {
+					// Record k retrive error
+				}
+			}
+			// Create a json obj and send it to cloud
 		}
-		// Create a json obj and send it to cloud
 	}
 
 	HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
@@ -167,27 +180,32 @@ int main(void) {
 	while (1) {
 		// Remark on the flow chart: POS checks status every 100 ms.
 
-		status = Disp_ReadStatus();
-		HAL_Delay(100);
-		if ((status == DISP_STATUS_STOPPED_FUELING)
-				&& (prevStatus != DISP_STATUS_STOPPED_FUELING)) {
-			/* Fueling just finished */
+		err = Disp_ReadStatus(&status);
+		HAL_Delay(200);
+		if (err != DISP_OK) {
+			// handle communication/device error
+		} else {
+			// use status
+			if ((status == DISP_STATUS_STOPPED_FUELING)
+					&& (prevStatus != DISP_STATUS_STOPPED_FUELING)) {
+				/* Fueling just finished */
 
-			if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
-					== DISP_OK) {
-				// Process transaction once
-				HAL_Delay(100);
+				if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
+						== DISP_OK) {
+					// Process transaction once
+					HAL_Delay(100);
+				}
+
+				if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
+						== DISP_OK) {
+					// Process accumulated totals
+					HAL_Delay(100);
+				}
 			}
 
-			if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
-					== DISP_OK) {
-				// Process accumulated totals
-				HAL_Delay(100);
-			}
+			/* Save current status for next iteration */
+			prevStatus = status;
 		}
-
-		/* Save current status for next iteration */
-		prevStatus = status;
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
