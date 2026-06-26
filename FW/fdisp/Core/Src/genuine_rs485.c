@@ -208,7 +208,7 @@ static DISP_ErrorCode_t Disp_Transaction(uint8_t *txBuf, uint16_t txLen) {
 		HAL_UART_DMAStop(dispenser.uart);
 		return DISP_RS485_SEND_ERROR;
 	}
-
+	HAL_Delay(RS485_WAIT_AFTER_SEND);
 	uint32_t start = HAL_GetTick();
 
 	while (!dispenser.rxDone) {

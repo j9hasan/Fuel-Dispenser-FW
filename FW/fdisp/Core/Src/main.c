@@ -181,7 +181,7 @@ int main(void) {
 		// Remark on the flow chart: POS checks status every 100 ms.
 
 		err = Disp_ReadStatus(&status);
-		HAL_Delay(200);
+		HAL_Delay(DISP_POLL_RATE);
 		if (err != DISP_OK) {
 			// handle communication/device error
 		} else {
@@ -193,13 +193,13 @@ int main(void) {
 				if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
 						== DISP_OK) {
 					// Process transaction once
-					HAL_Delay(100);
+//					HAL_Delay(100);
 				}
 
 				if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
 						== DISP_OK) {
 					// Process accumulated totals
-					HAL_Delay(100);
+//					HAL_Delay(100);
 				}
 			}
 
