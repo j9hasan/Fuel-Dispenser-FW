@@ -14,9 +14,11 @@
 
 /* Configuration */
 #define RS485_RX_BUFFER_SIZE      24
-#define RS485_TX_TIMEOUT_MS       100
+#define RS485_TX_TIMEOUT_MS       200
 #define RS485_RX_TIMEOUT_MS 50
 
+#define DISP_POLL_RATE 50
+#define RS485_WAIT_AFTER_SEND 50
 /* Device mode */
 
 #define DISP_MODE_CONTROL    0x00
