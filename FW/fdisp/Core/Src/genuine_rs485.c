@@ -504,3 +504,33 @@ uint8_t Disp_CRC8(uint8_t *buf, uint16_t len) {
 
 	return crc;
 }
+
+/**
+ * @brief Check communication with the dispenser.
+ *
+ * Attempts to read the dispenser status multiple times. If any
+ * attempt succeeds, the dispenser is considered connected.
+ *
+ * @param retries Number of retry attempts.
+ *
+ * @retval DISP_CONNECTED
+ * @retval DISP_DISCONNECTED
+ */
+DISP_CommState_t Disp_CheckCommunication(uint8_t retries)
+{
+    DISP_Status_t status;
+
+    for (uint8_t i = 0; i < retries; i++)
+    {
+        status = Disp_ReadStatus(&status);
+
+        if (status != DISP_STATUS_AFTER_NO_RESP)
+        {
+            return DISP_CONNECTED;
+        }
+
+        HAL_Delay(100);
+    }
+
+    return DISP_DISCONNECTED;
+}

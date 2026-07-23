@@ -42,11 +42,15 @@
 #define DISP_LEN_OFFLINE_COUNT  0x0EU
 #define DISP_LEN_OFFLINE_DATA  0x08U
 
+typedef enum {
+	DISP_DISCONNECTED, DISP_CONNECTED
+} DISP_CommState_t;
+
 typedef struct {
 	float volume;     // Liters
 	float sale;       // Money amount
 	bool valid;
-} DISP_OfflineRecord_t, DISP_Totalizer_t;
+} DISP_OfflineRecord_t;
 
 /* Origin address */
 typedef enum {
@@ -72,7 +76,8 @@ typedef enum {
 	DISP_STATUS_STOPPED_FUELING = 0x03, // Status after Stop fueling
 	DISP_STATUS_BUSY = 0x04, // Fueling
 	DISP_STATUS_NOZZLE_NOT_RETURNED = 0x05,
-	DISP_STATUS_AFTER_RESTART = 0x06 // Nozzle offline
+	DISP_STATUS_AFTER_RESTART = 0x06, // Nozzle offline
+	DISP_STATUS_AFTER_NO_RESP = 0xFF // dispenser offline
 } DISP_Status_t;
 
 /* Error codes returned by device when 0x8X happens*/
@@ -146,4 +151,5 @@ DISP_ErrorCode_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber,
 		float *volume, float *sale);
 DISP_ErrorCode_t Disp_GetAccumulatedData(float *volume, float *sale);
 DISP_ErrorCode_t Disp_GetDataWhenStopWorking(float *volume, float *sale);
+DISP_CommState_t Disp_CheckCommunication(uint8_t retries);
 #endif /* INC_GENUINE_RS485_H_ */

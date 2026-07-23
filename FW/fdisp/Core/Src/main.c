@@ -33,9 +33,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 RS485_Handle_t dispenser;
-typedef enum {
-	DISP_DISCONNECTED, DISP_CONNECTED
-} DISP_CommState_t;
+
 DISP_CommState_t CommState = DISP_DISCONNECTED;
 
 /* USER CODE END PTD */
@@ -60,8 +58,8 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 uint8_t txBuf[16]; // Buffer for storing command to be sent
 
-DISP_Status_t status = DISP_STATUS_IDLE;
-static DISP_Status_t prevStatus = DISP_STATUS_IDLE;
+DISP_Status_t status = DISP_STATUS_AFTER_NO_RESP;
+static DISP_Status_t prevStatus = DISP_STATUS_AFTER_NO_RESP;
 DISP_ErrorCode_t err;
 
 int16_t offline_record_count = 0;
@@ -71,8 +69,6 @@ float vol_stopped = 0;
 float sale_stopped = 0;
 float vol_accumulated = 0;
 float sale_accumulated = 0;
-float vol_offline = 0;
-float sale_offline = 0;
 int nozzleNumber = 1;
 
 /* Holds the outcome of the SIM800L connectivity test so it can be inspected
@@ -104,6 +100,58 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 		dispenser.rxLen = Size;
 		dispenser.rxDone = true;
 	}
+}
+/**
+ * @brief Read all offline fueling records from the dispenser and upload them.
+ *
+ * @param nozzleNumber Dispenser nozzle number.
+ *
+ * @retval true  Upload successful or no offline records exist.
+ * @retval false Failed to read records or upload.
+ */
+bool Disp_UploadOfflineRecords(uint8_t nozzleNumber) {
+	int16_t offline_record_count;
+	float vol_offline;
+	float sale_offline;
+
+	Disp_SetMode(DISP_MODE_CONTROL);
+
+	if (Disp_CheckOfflineFuelingCount(&offline_record_count) != DISP_OK) {
+		return false;
+	}
+
+	HAL_Delay(200);
+
+	/* No offline records */
+	if (offline_record_count == 0) {
+		return true;
+	}
+
+	/* Invalid count */
+	if (offline_record_count < 0) {
+		return false;
+	}
+
+	char json[JSON_BUFFER_SIZE];
+
+	JSON_OfflineBegin(json, sizeof(json), offline_record_count, nozzleNumber);
+
+	for (int k = offline_record_count; k > 0; k--) {
+		if (Disp_GetOfflineFuelingRecord(k, &vol_offline, &sale_offline)
+				!= DISP_OK) {
+			return false;
+		}
+
+		JSON_OfflineAddRecord(sale_offline, vol_offline, (k == 1));
+	}
+
+	int len = JSON_OfflineEnd();
+
+	if (!SIM800L_IsInternetConnected()) {
+		return false;
+	}
+
+	return SIM800L_Cloud_SendJson(JSON_GetBuffer(), len);
 }
 /* USER CODE END 0 */
 
@@ -151,56 +199,34 @@ int main(void) {
 
 	HAL_Delay(200); // let the bus settle before the first command
 
-	status = Disp_ReadStatus(&status); 	// read status
+	HAL_Delay(10000); //module need some time to boot
 
-	HAL_Delay(200);
+	sim800l_status = SIM800L_Initialize(&huart1, SIM800L_STARTUP_TIMEOUT_MS); // Try for up to 60 seconds
 
-	Disp_SetMode(DISP_MODE_CONTROL);
+	if (sim800l_status == SIM800L_OK) {
+		deviceOffline = false;
+	} else {
+		deviceOffline = true;
 
-	if (Disp_CheckOfflineFuelingCount(&offline_record_count) == DISP_OK) {
-		// Use fuelingCount
-		HAL_Delay(200);
-
-		if (offline_record_count == 0) {
-			// No offline transaction, Proceed
-		} else if (offline_record_count < 0) {
-			// Fueling count parse error
-		} else {
-			// Retrieve missed fueling information while offline
-			char json[JSON_BUFFER_SIZE];
-
-			JSON_OfflineBegin(json, sizeof(json), offline_record_count,
-					nozzleNumber);
-
-			for (int k = offline_record_count; k > 0; k--) {
-				if (Disp_GetOfflineFuelingRecord(k, &vol_offline, &sale_offline)
-						== DISP_OK) {
-					JSON_OfflineAddRecord(sale_offline, vol_offline, (k == 1));
-				} else {
-					// Record retrieve error
-				}
-			}
-
-			/* Close the JSON AFTER all records have been added */
-			int len = JSON_OfflineEnd();
-
-			sim800l_status = SIM800L_TestConnection();
-
-			if (sim800l_status == SIM800L_OK) {
-//				sim800l_signal_quality = SIM800L_GetSignalQuality();
-
-				if (SIM800L_Cloud_SendJson(JSON_GetBuffer(), len)) {
-					// Success
-				} else {
-					// Upload failed
-				}
-			} else {
-				// Modem not connected
-			}
-		}
+		// Continue operating in offline mode
 	}
 
-	HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
+	CommState = Disp_CheckCommunication(5);
+
+	if (CommState == DISP_CONNECTED) {
+		/* Continue initialization */
+		Disp_SetMode(DISP_MODE_CONTROL);
+
+		Disp_UploadOfflineRecords(nozzleNumber);
+
+		HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
+	} else {
+		/* Handle disconnected dispenser */
+		while (1) {
+			// No dispenser connected
+			HAL_Delay(200);
+		}
+	}
 
 	/* USER CODE END 2 */
 
@@ -224,13 +250,13 @@ int main(void) {
 						== DISP_OK) {
 					// Process transaction once
 					char json[JSON_BUFFER_SIZE];
-					JSON_SaleBegin(json, sizeof(json), "1784713845", sale_stopped,
-							vol_stopped, nozzleNumber);
+					JSON_SaleBegin(json, sizeof(json), "1784713845",
+							sale_stopped, vol_stopped, nozzleNumber);
 
 					int len = JSON_SaleEnd();
-					sim800l_status = SIM800L_TestConnection();
-					if (sim800l_status == SIM800L_OK) {
-						sim800l_signal_quality = SIM800L_GetSignalQuality();
+
+					if (SIM800L_IsInternetConnected()) {
+//						sim800l_signal_quality = SIM800L_GetSignalQuality();
 						SIM800L_Cloud_SendJson(JSON_GetBuffer(), len);
 					} else {
 						// Display sending error, store in SD card
