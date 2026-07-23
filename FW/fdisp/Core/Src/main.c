@@ -25,6 +25,8 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include "genuine_rs485.h"
+#include "json_builder.h"
+#include "sim800l.h"
 
 /* USER CODE END Includes */
 
@@ -71,7 +73,12 @@ float vol_accumulated = 0;
 float sale_accumulated = 0;
 float vol_offline = 0;
 float sale_offline = 0;
+int nozzleNumber = 1;
 
+/* Holds the outcome of the SIM800L connectivity test so it can be inspected
+ in the debugger (Live Watch / Live Expressions) without a second UART. */
+volatile SIM800L_StatusTypeDef sim800l_status = SIM800L_INITIALIZING;
+volatile int8_t sim800l_signal_quality = -1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -138,6 +145,9 @@ int main(void) {
 	RS485_Init(&dispenser, &huart1,
 	DE_GPIO_GPIO_Port,
 	DE_GPIO_Pin);
+	// IIC Display init
+	// Json Init
+	// Uart2 Init, communication, delay about 40s
 
 	HAL_Delay(200); // let the bus settle before the first command
 
@@ -157,16 +167,36 @@ int main(void) {
 			// Fueling count parse error
 		} else {
 			// Retrieve missed fueling information while offline
+			char json[JSON_BUFFER_SIZE];
+
+			JSON_OfflineBegin(json, sizeof(json), offline_record_count,
+					nozzleNumber);
 
 			for (int k = offline_record_count; k > 0; k--) {
 				if (Disp_GetOfflineFuelingRecord(k, &vol_offline, &sale_offline)
 						== DISP_OK) {
-
+					JSON_OfflineAddRecord(sale_offline, vol_offline, (k == 1));
 				} else {
-					// Record k retrive error
+					// Record retrieve error
 				}
 			}
-			// Create a json obj and send it to cloud
+
+			/* Close the JSON AFTER all records have been added */
+			int len = JSON_OfflineEnd();
+
+			sim800l_status = SIM800L_TestConnection();
+
+			if (sim800l_status == SIM800L_OK) {
+//				sim800l_signal_quality = SIM800L_GetSignalQuality();
+
+				if (SIM800L_Cloud_SendJson(JSON_GetBuffer(), len)) {
+					// Success
+				} else {
+					// Upload failed
+				}
+			} else {
+				// Modem not connected
+			}
 		}
 	}
 
@@ -193,7 +223,20 @@ int main(void) {
 				if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
 						== DISP_OK) {
 					// Process transaction once
-//					HAL_Delay(100);
+					char json[JSON_BUFFER_SIZE];
+					JSON_SaleBegin(json, sizeof(json), "1784713845", sale_stopped,
+							vol_stopped, nozzleNumber);
+
+					int len = JSON_SaleEnd();
+					sim800l_status = SIM800L_TestConnection();
+					if (sim800l_status == SIM800L_OK) {
+						sim800l_signal_quality = SIM800L_GetSignalQuality();
+						SIM800L_Cloud_SendJson(JSON_GetBuffer(), len);
+					} else {
+						// Display sending error, store in SD card
+					}
+//					Send(JSON_GetBuffer(), JSON_GetLength());
+
 				}
 
 				if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
@@ -289,12 +332,12 @@ static void MX_USART1_UART_Init(void) {
 	if (HAL_UART_Init(&huart1) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetTxFifoThreshold(&huart1, UART_TXFIFO_THRESHOLD_1_8)
-			!= HAL_OK) {
+	if (HAL_UARTEx_SetTxFifoThreshold(&huart1,
+	UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetRxFifoThreshold(&huart1, UART_RXFIFO_THRESHOLD_1_8)
-			!= HAL_OK) {
+	if (HAL_UARTEx_SetRxFifoThreshold(&huart1,
+	UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
 		Error_Handler();
 	}
 	if (HAL_UARTEx_DisableFifoMode(&huart1) != HAL_OK) {
@@ -334,12 +377,12 @@ static void MX_USART3_UART_Init(void) {
 	if (HAL_UART_Init(&huart3) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetTxFifoThreshold(&huart3, UART_TXFIFO_THRESHOLD_1_8)
-			!= HAL_OK) {
+	if (HAL_UARTEx_SetTxFifoThreshold(&huart3,
+	UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetRxFifoThreshold(&huart3, UART_RXFIFO_THRESHOLD_1_8)
-			!= HAL_OK) {
+	if (HAL_UARTEx_SetRxFifoThreshold(&huart3,
+	UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
 		Error_Handler();
 	}
 	if (HAL_UARTEx_DisableFifoMode(&huart3) != HAL_OK) {

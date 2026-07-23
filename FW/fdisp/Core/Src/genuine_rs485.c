@@ -459,7 +459,7 @@ bool Disp_SetMode(uint8_t mode) {
 
 	uint16_t len = Disp_BuildWrite(0x01, 0x5A, 1, &mode, buf);
 
-	DISP_ErrorCode_t err = Disp_Transaction(buf, len);
+	Disp_Transaction(buf, len);
 
 	if (!Disp_ParsePacket(dispenser.rxBuf, dispenser.rxLen))
 		return false;

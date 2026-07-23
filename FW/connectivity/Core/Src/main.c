@@ -98,40 +98,42 @@ int main(void) {
 	/* USER CODE BEGIN 2 */
 	/* SIM800L is wired to USART1 (see sim800l.h for pinout notes). Give the
 	 module a moment to boot before the first AT command. */
-	HAL_Delay(1000);
+	HAL_Delay(10000); //module need some time to boot
 
-	SIM800L_Init(&huart1);
-
-	sim800l_status = SIM800L_TestConnection();
+	sim800l_status = SIM800L_Initialize(&huart1, SIM800L_STARTUP_TIMEOUT_MS); // Try for up to 60 seconds
 
 	if (sim800l_status == SIM800L_OK) {
-		sim800l_signal_quality = SIM800L_GetSignalQuality();
+		deviceOffline = false;
+	} else {
+		deviceOffline = true;
+
+		// Continue operating in offline mode
 	}
-	sim800l_status = SIM800L_OpenBearer();
+
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
+
 	while (1) {
 
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
-		char json[256];
 
-		sprintf(json, "{"
-				"\"device\":\"Pump01\","
-				"\"liter\":58.37,"
-				"\"amount\":123456.78,"
-				"\"nozzle\":1"
-				"}");
+		char testJson[] = "{"
+				"\"device\":\"STM32H7\","
+				"\"status\":\"online\","
+				"\"signal\":24,"
+				"\"temperature\":32.5,"
+				"\"counter\":1"
+				"}";
 
-		sim800l_status = SIM800L_TestConnection();
-		if (sim800l_status == SIM800L_OK) {
-			sim800l_signal_quality = SIM800L_GetSignalQuality();
-			SIM800L_Cloud_SendJson(json);
+//		bool result = SIM800L_Cloud_SendJson(testJson, strlen(testJson));
+		if (!SIM800L_IsInternetConnected()) {
+			SIM800L_ConnectInternet();
 		}
-		HAL_Delay(15000);
+		HAL_Delay(50000);
 	}
 	/* USER CODE END 3 */
 }
