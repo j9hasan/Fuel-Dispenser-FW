@@ -27,6 +27,7 @@
 #include "genuine_rs485.h"
 #include "json_builder.h"
 #include "sim800l.h"
+#include "display.h"
 
 /* USER CODE END Includes */
 
@@ -49,6 +50,8 @@ DISP_CommState_t CommState = DISP_DISCONNECTED;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+
+I2C_HandleTypeDef hi2c1;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
@@ -84,6 +87,7 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* Disp_CRC8 lives in genuine_rs485.c; declared here in case it isn't
@@ -189,6 +193,7 @@ int main(void) {
 	MX_DMA_Init();
 	MX_USART1_UART_Init();
 	MX_USART3_UART_Init();
+	MX_I2C1_Init();
 	/* USER CODE BEGIN 2 */
 	RS485_Init(&dispenser, &huart1,
 	DE_GPIO_GPIO_Port,
@@ -198,30 +203,44 @@ int main(void) {
 	// Uart2 Init, communication, delay about 40s
 
 	HAL_Delay(200); // let the bus settle before the first command
-
+	Display_SetMiddleText("SIM Init.");
 	HAL_Delay(10000); //module need some time to boot
 
 	sim800l_status = SIM800L_Initialize(&huart1, SIM800L_STARTUP_TIMEOUT_MS); // Try for up to 60 seconds
 
 	if (sim800l_status == SIM800L_OK) {
 		deviceOffline = false;
+		Display_SetMiddleText("Connected");
+		HAL_Delay(1000);
+		Display_SetNetStatus(DISPLAY_NET_ONLINE);
 	} else {
 		deviceOffline = true;
-
+		Display_SetMiddleText("NET OFFLINE");
+		HAL_Delay(1000);
+		Display_SetNetStatus(DISPLAY_NET_OFFLINE);
 		// Continue operating in offline mode
 	}
+
+	Display_SetMiddleText("Connecting to Machine...");
+	HAL_Delay(1000);
 
 	CommState = Disp_CheckCommunication(5);
 
 	if (CommState == DISP_CONNECTED) {
 		/* Continue initialization */
+		Display_SetMiddleText("Connected");
+		HAL_Delay(1000);
+		Display_SetMiddleText("Setting Control Mode");
 		Disp_SetMode(DISP_MODE_CONTROL);
-
+		HAL_Delay(1000);
+		Display_SetMiddleText("Handling Offline Data");
 		Disp_UploadOfflineRecords(nozzleNumber);
-
+		HAL_Delay(1000);
 		HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
 	} else {
 		/* Handle disconnected dispenser */
+		Display_SetMiddleText("No Dispenser Detected.");
+		HAL_Delay(1000);
 		while (1) {
 			// No dispenser connected
 			HAL_Delay(200);
@@ -238,33 +257,45 @@ int main(void) {
 
 		err = Disp_ReadStatus(&status);
 		HAL_Delay(DISP_POLL_RATE);
+		Display_SetMiddleText("IDLE");
 		if (err != DISP_OK) {
 			// handle communication/device error
+			Display_SetMiddleText("Dispenser Disconnected.");
+			HAL_Delay(1000);
 		} else {
 			// use status
 			if ((status == DISP_STATUS_STOPPED_FUELING)
 					&& (prevStatus != DISP_STATUS_STOPPED_FUELING)) {
 				/* Fueling just finished */
-
+				Display_SetMiddleText("New Record Detected");
+				HAL_Delay(500);
+				Display_SetMiddleText("Getting Record");
+				HAL_Delay(500);
 				if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
 						== DISP_OK) {
 					// Process transaction once
+					Display_SetMiddleText("Getting Found");
+					HAL_Delay(500);
 					char json[JSON_BUFFER_SIZE];
 					JSON_SaleBegin(json, sizeof(json), "1784713845",
 							sale_stopped, vol_stopped, nozzleNumber);
 
 					int len = JSON_SaleEnd();
 
+					Display_SetMiddleText("Sending to cloud");
+					HAL_Delay(500);
+
 					if (SIM800L_IsInternetConnected()) {
 //						sim800l_signal_quality = SIM800L_GetSignalQuality();
 						SIM800L_Cloud_SendJson(JSON_GetBuffer(), len);
+						Display_SetMiddleText("Sent");
+						HAL_Delay(500);
 					} else {
 						// Display sending error, store in SD card
+						Display_SetMiddleText(
+								"Cloud Sending Failed, Check internet");
 					}
-//					Send(JSON_GetBuffer(), JSON_GetLength());
-
 				}
-
 				if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
 						== DISP_OK) {
 					// Process accumulated totals
@@ -331,6 +362,51 @@ void SystemClock_Config(void) {
 }
 
 /**
+ * @brief I2C1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_I2C1_Init(void) {
+
+	/* USER CODE BEGIN I2C1_Init 0 */
+
+	/* USER CODE END I2C1_Init 0 */
+
+	/* USER CODE BEGIN I2C1_Init 1 */
+
+	/* USER CODE END I2C1_Init 1 */
+	hi2c1.Instance = I2C1;
+	hi2c1.Init.Timing = 0x00707CBB;
+	hi2c1.Init.OwnAddress1 = 0;
+	hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+	hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+	hi2c1.Init.OwnAddress2 = 0;
+	hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+	hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+	hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+	if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
+		Error_Handler();
+	}
+
+	/** Configure Analogue filter
+	 */
+	if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE)
+			!= HAL_OK) {
+		Error_Handler();
+	}
+
+	/** Configure Digital filter
+	 */
+	if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN I2C1_Init 2 */
+
+	/* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
  * @brief USART1 Initialization Function
  * @param None
  * @retval None
@@ -358,12 +434,12 @@ static void MX_USART1_UART_Init(void) {
 	if (HAL_UART_Init(&huart1) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetTxFifoThreshold(&huart1,
-	UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
+	if (HAL_UARTEx_SetTxFifoThreshold(&huart1, UART_TXFIFO_THRESHOLD_1_8)
+			!= HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetRxFifoThreshold(&huart1,
-	UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
+	if (HAL_UARTEx_SetRxFifoThreshold(&huart1, UART_RXFIFO_THRESHOLD_1_8)
+			!= HAL_OK) {
 		Error_Handler();
 	}
 	if (HAL_UARTEx_DisableFifoMode(&huart1) != HAL_OK) {
@@ -403,12 +479,12 @@ static void MX_USART3_UART_Init(void) {
 	if (HAL_UART_Init(&huart3) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetTxFifoThreshold(&huart3,
-	UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
+	if (HAL_UARTEx_SetTxFifoThreshold(&huart3, UART_TXFIFO_THRESHOLD_1_8)
+			!= HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_UARTEx_SetRxFifoThreshold(&huart3,
-	UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
+	if (HAL_UARTEx_SetRxFifoThreshold(&huart3, UART_RXFIFO_THRESHOLD_1_8)
+			!= HAL_OK) {
 		Error_Handler();
 	}
 	if (HAL_UARTEx_DisableFifoMode(&huart3) != HAL_OK) {
