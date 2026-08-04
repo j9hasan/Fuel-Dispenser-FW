@@ -97,6 +97,7 @@ typedef enum {
 	DISP_RS485_FRAME_ERROR = 0x82,
 	DISP_RS485_START_REC_ERROR = 0x83,
 	DISP_RS485_TRANSACTION_ERROR = 0x84
+
 } DISP_ErrorCode_t;
 
 typedef struct {

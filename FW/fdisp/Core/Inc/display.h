@@ -5,7 +5,7 @@
 #include "ssd1306.h"
 #include "ssd1306_fonts.h"
 #include <string.h>
-
+#include <stdio.h>
 typedef enum {
     DISPLAY_NET_OFFLINE = 0,
     DISPLAY_NET_ONLINE  = 1
@@ -21,4 +21,5 @@ void Display_SetNetStatus(Display_NetStatus_t status);
 void Display_SetMiddleText(const char *text);
 void Display_SetStatusText(const char *text);
 
+void SIM800_BootAnimation(void);
 #endif

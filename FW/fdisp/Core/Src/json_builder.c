@@ -80,3 +80,69 @@ int JSON_SaleEnd(void)
                         "}");
     return jsonLen;
 }
+
+
+// error code send
+#include <stdio.h>
+#include "json_builder.h"
+#include "genuine_rs485.h"
+
+int JSON_GenerateDispenserError(char *buffer,
+                                size_t bufferSize,
+                                DISP_ErrorCode_t err)
+{
+    const char *errorName = "UNKNOWN_ERROR";
+    const char *timeStr = RTC_GetDateTimeString();
+
+    switch (err)
+    {
+    case DISP_OK:
+        errorName = "DISP_OK";
+        break;
+    case DISP_WRONG_CMD:
+        errorName = "DISP_WRONG_CMD";
+        break;
+    case DISP_DEVICE_STOP_WORKING:
+        errorName = "DISP_DEVICE_STOP_WORKING";
+        break;
+    case DISP_RESEND_COMMAND:
+        errorName = "DISP_RESEND_COMMAND";
+        break;
+    case DISP_DEVICE_BUSY:
+        errorName = "DISP_DEVICE_BUSY";
+        break;
+    case DISP_DEVICE_OFFLINE:
+        errorName = "DISP_DEVICE_OFFLINE";
+        break;
+    case DISP_CRC_ERROR:
+        errorName = "DISP_CRC_ERROR";
+        break;
+    case DISP_RS485_SEND_ERROR:
+        errorName = "DISP_RS485_SEND_ERROR";
+        break;
+    case DISP_RS485_RX_TIMEOUT:
+        errorName = "DISP_RS485_RX_TIMEOUT";
+        break;
+    case DISP_RS485_FRAME_ERROR:
+        errorName = "DISP_RS485_FRAME_ERROR";
+        break;
+    case DISP_RS485_START_REC_ERROR:
+        errorName = "DISP_RS485_START_REC_ERROR";
+        break;
+    case DISP_RS485_TRANSACTION_ERROR:
+        errorName = "DISP_RS485_TRANSACTION_ERROR";
+        break;
+    }
+
+    return snprintf(buffer,
+                    bufferSize,
+                    "{"
+                    "\"type\":\"dispenser_error\","
+                    "\"time\":\"%s\","
+                    "\"errorCode\":%u,"
+                    "\"errorName\":\"%s\""
+                    "}",
+                    timeStr,
+                    (uint8_t)err,
+                    errorName);
+}

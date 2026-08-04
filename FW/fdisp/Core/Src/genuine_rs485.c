@@ -240,7 +240,7 @@ DISP_ErrorCode_t Disp_ReadStatus(DISP_Status_t *status) {
 
 	uint8_t buf[16];
 	uint16_t txLen;
-
+	*status = (DISP_Status_t) DISP_STATUS_AFTER_NO_RESP;
 	//Master: A5 | 01 | 03 | 00 | 01 | CRC8
 
 	txLen = Disp_BuildRead(0x01, DISP_ORIGIN_STATUS, DISP_LEN_STATUS, buf);
@@ -518,13 +518,14 @@ uint8_t Disp_CRC8(uint8_t *buf, uint16_t len) {
  */
 DISP_CommState_t Disp_CheckCommunication(uint8_t retries)
 {
-    DISP_Status_t status;
+    DISP_Status_t dispStatus = DISP_STATUS_AFTER_NO_RESP;
+    DISP_ErrorCode_t err = DISP_RS485_RX_TIMEOUT;      // or whatever the return type is
 
     for (uint8_t i = 0; i < retries; i++)
     {
-        status = Disp_ReadStatus(&status);
+    	err  = Disp_ReadStatus(&dispStatus);
 
-        if (status != DISP_STATUS_AFTER_NO_RESP)
+        if (dispStatus != DISP_STATUS_AFTER_NO_RESP)
         {
             return DISP_CONNECTED;
         }
