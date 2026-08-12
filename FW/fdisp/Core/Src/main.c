@@ -154,7 +154,7 @@ bool Disp_UploadOfflineRecords(uint8_t nozzleNumber) {
 		JSON_OfflineAddRecord(sale_offline, vol_offline, (k == 1));
 	}
 
-	int len = JSON_OfflineEnd();
+	JSON_OfflineEnd();
 
 	if (!SIM800L_IsInternetConnected()) {
 		return false;
@@ -174,37 +174,37 @@ bool Disp_UploadOfflineRecords(uint8_t nozzleNumber) {
 int main(void)
 {
 
-  /* USER CODE BEGIN 1 */
+	/* USER CODE BEGIN 1 */
 
-  /* USER CODE END 1 */
+	/* USER CODE END 1 */
 
-  /* MPU Configuration--------------------------------------------------------*/
-  MPU_Config();
+	/* MPU Configuration--------------------------------------------------------*/
+	MPU_Config();
 
-  /* MCU Configuration--------------------------------------------------------*/
+	/* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+	HAL_Init();
 
-  /* USER CODE BEGIN Init */
+	/* USER CODE BEGIN Init */
 
-  /* USER CODE END Init */
+	/* USER CODE END Init */
 
-  /* Configure the system clock */
-  SystemClock_Config();
+	/* Configure the system clock */
+	SystemClock_Config();
 
-  /* USER CODE BEGIN SysInit */
+	/* USER CODE BEGIN SysInit */
 
-  /* USER CODE END SysInit */
+	/* USER CODE END SysInit */
 
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_USART1_UART_Init();
-  MX_USART3_UART_Init();
-  MX_I2C1_Init();
-  MX_RTC_Init();
-  /* USER CODE BEGIN 2 */
+	/* Initialize all configured peripherals */
+	MX_GPIO_Init();
+	MX_DMA_Init();
+	MX_USART1_UART_Init();
+	MX_USART3_UART_Init();
+	MX_I2C1_Init();
+	MX_RTC_Init();
+	/* USER CODE BEGIN 2 */
 	RS485_Init(&dispenser, &huart1,
 	DE_GPIO_GPIO_Port,
 	DE_GPIO_Pin);
@@ -214,9 +214,8 @@ int main(void)
 	// Json Init
 	// Uart2 Init, communication, delay about 40s
 
-	SIM800_BootAnimation();
+	//SIM800_BootAnimation();
 
-//	RTC_SyncFromString("26/08/04,01:49:20+24"); //Set time Once
 
 	sim800l_status = SIM800L_Initialize(&huart3, SIM800L_STARTUP_TIMEOUT_MS); // Try for up to 60 seconds
 
@@ -227,9 +226,10 @@ int main(void)
 		HAL_Delay(1000);
 		Display_SetNetStatus(DISPLAY_NET_ONLINE);
 
-
+		Display_SetStatusText(SyncServerTimeText(SyncServerTime()));
 
 		Display_SetMiddleText(RTC_GetDateTimeString());
+
 		HAL_Delay(2000);
 
 	} else {
@@ -267,27 +267,10 @@ int main(void)
 			// No dispenser connected
 			Display_SetMiddleText(msg[idx]);
 			idx = (idx + 1) % 2;
-
 			if (Disp_CheckCommunication(1) == DISP_CONNECTED) {
 				break;
 			}
-			char *timeStr = RTC_GetDateTimeString();
-			char jsonBuffer[256];
-
-			JSON_GenerateDispenserError(jsonBuffer, sizeof(jsonBuffer),
-					DISP_RS485_RX_TIMEOUT);
-
-			// jsonBuffer now contains:
-			// {
-			//   "type":"dispenser_error",
-			//   "errorCode":129,
-			//   "errorName":"DISP_RS485_RX_TIMEOUT"
-			// }
-			if (SIM800L_IsInternetConnected()) {
-				SIM800L_Cloud_SendJson(jsonBuffer);
-			}
 			HAL_Delay(100000);
-
 		}
 	}
 
@@ -325,7 +308,7 @@ int main(void)
 					JSON_SaleBegin(json, sizeof(json), "1784713845",
 							sale_stopped, vol_stopped, nozzleNumber);
 
-					int len = JSON_SaleEnd();
+					JSON_SaleEnd();
 
 					Display_SetMiddleText("Sending to cloud");
 					HAL_Delay(500);

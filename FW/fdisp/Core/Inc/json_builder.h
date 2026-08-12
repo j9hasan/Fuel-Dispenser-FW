@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "genuine_rs485.h"
 /* Offline JSON */
 
 #define JSON_BUFFER_SIZE 4096
@@ -24,5 +25,10 @@ int JSON_SaleEnd(void);
 
 /* Common */
 char* JSON_GetBuffer(void);
+
+
+int JSON_GenerateDispenserError(char *buffer,
+                                size_t bufferSize,
+                                DISP_ErrorCode_t err);
 
 #endif

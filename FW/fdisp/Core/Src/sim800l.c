@@ -670,6 +670,123 @@ bool SIM800L_Cloud_SendJson(const char *json)
     return true;
 }
 
+bool SIM800L_ServerTimeSync(char *timeBuffer, size_t bufferSize)
+{
+    char cmd[160];
+    char *jsonStart;
+    char *timeStart;
+    char *timeEnd;
+
+    if (timeBuffer == NULL || bufferSize == 0)
+        return false;
+
+    timeBuffer[0] = '\0';
+
+    /* Make sure previous HTTP session is closed */
+    SIM800L_SendCommand("AT+HTTPTERM", "OK", 3000);
+
+    if (!SIM800L_SendCommand("AT+HTTPINIT", "OK", 3000))
+        return false;
+
+    if (!SIM800L_SendCommand("AT+HTTPPARA=\"CID\",1", "OK", 3000))
+        goto cleanup;
+
+    snprintf(cmd, sizeof(cmd),
+             "AT+HTTPPARA=\"URL\",\"%s\"",
+             SIM800L_TIME_SYNC_URL);
+
+    if (!SIM800L_SendCommand(cmd, "OK", 3000))
+        goto cleanup;
+
+    /*
+     * HTTP GET
+     */
+    if (!SIM800L_SendCommand("AT+HTTPACTION=0",
+                             "+HTTPACTION:",
+                             30000))
+        goto cleanup;
+
+    /* Parse HTTP status */
+    int method;
+    int status;
+    int length;
+
+    char *action = strstr(sim800l_rx_buf, "+HTTPACTION:");
+
+    if (action == NULL)
+        goto cleanup;
+
+    if (sscanf(action,
+               "+HTTPACTION: %d,%d,%d",
+               &method,
+               &status,
+               &length) != 3)
+        goto cleanup;
+
+//    if (!SIM800L_SendCommand("AT+HTTPREAD", "OK", 5000))
+
+    if (status != 200)
+        goto cleanup;
+
+    /*
+     * Read HTTP response body
+     */
+    if (!SIM800L_SendCommand("AT+HTTPREAD", "OK", 5000))
+        goto cleanup;
+
+    /*
+     * Find:
+     *
+     * "server_time":"2026-08-11T09:22:02Z"
+     */
+    timeStart = strstr(sim800l_rx_buf, "\"server_time\"");
+
+    if (timeStart == NULL)
+        goto cleanup;
+
+    timeStart = strchr(timeStart, ':');
+
+    if (timeStart == NULL)
+        goto cleanup;
+
+    timeStart++;
+
+    /* Skip spaces */
+    while (*timeStart == ' ')
+        timeStart++;
+
+    /* Expect opening quote */
+    if (*timeStart != '"')
+        goto cleanup;
+
+    timeStart++;
+
+    timeEnd = strchr(timeStart, '"');
+
+    if (timeEnd == NULL)
+        goto cleanup;
+
+    size_t timeLength = (size_t)(timeEnd - timeStart);
+
+    if (timeLength >= bufferSize)
+        goto cleanup;
+
+    memcpy(timeBuffer, timeStart, timeLength);
+    timeBuffer[timeLength] = '\0';
+
+    /*
+     * Close HTTP session
+     */
+    SIM800L_SendCommand("AT+HTTPTERM", "OK", 3000);
+
+    return true;
+
+cleanup:
+
+    SIM800L_SendCommand("AT+HTTPTERM", "OK", 3000);
+
+    return false;
+}
 
 /**
  * @brief  Discard any stale bytes sitting in the UART before issuing a new command.
@@ -680,116 +797,3 @@ static void SIM800L_FlushRx(void) {
 		/* discard */
 	}
 }
-
-bool TimeAPI_Get(char *response, uint16_t maxLen)
-{
-    int method, status, length;
-    char *p;
-
-    SIM800L_SendCommand("AT+HTTPTERM", "OK", 3000);
-
-    SIM800L_SendCommand("AT+HTTPINIT", "OK", 3000);
-
-    SIM800L_SendCommand("AT+HTTPPARA=\"CID\",1", "OK", 3000);
-
-    SIM800L_SendCommand(
-        "AT+HTTPPARA=\"URL\",\"http://worldtimeapi.org/api/timezone/Asia/Dhaka.txt\"",
-        "OK",
-        3000);
-
-    SIM800L_SendCommand("AT+HTTPACTION=0", "+HTTPACTION:", 10000);
-
-    p = strstr(sim800l_rx_buf, "+HTTPACTION:");
-    if (p == NULL)
-        goto error;
-
-    if (sscanf(p,
-               "+HTTPACTION: %d,%d,%d",
-               &method,
-               &status,
-               &length) != 3)
-        goto error;
-
-    if (status != 200)
-        goto error;
-
-    SIM800L_SendCommand("AT+HTTPREAD", "OK", 5000);
-
-    strncpy(response, sim800l_rx_buf, maxLen - 1);
-    response[maxLen - 1] = '\0';
-
-    SIM800L_SendCommand("AT+HTTPTERM", "OK", 3000);
-
-    return true;
-
-error:
-
-    SIM800L_SendCommand("AT+HTTPTERM", "OK", 3000);
-
-    return false;
-}
-
-//
-//bool SIM800L_SyncNetworkTime(void)
-//{
-//    // Configure NTP server (Bangladesh UTC+6 = 24)
-//    if (!SIM800L_SendCommand(
-//            "AT+CNTP=\"pool.ntp.org\",24",
-//            "OK",
-//            3000))
-//    {
-//        return false;
-//    }
-//
-//    // Start NTP synchronization
-//    if (!SIM800L_SendCommand(
-//            "AT+CNTP",
-//            "+CNTP:",
-//            30000))
-//    {
-//        return false;
-//    }
-//
-//    // Check the result
-//    char *p = strstr(sim800l_rx_buf, "+CNTP:");
-//    if (p == NULL)
-//        return false;
-//
-//    int result;
-//    if (sscanf(p, "+CNTP: %d", &result) != 1)
-//        return false;
-//
-//    return (result == 1);
-//}
-//
-//bool SIM800L_GetNetworkTime(char *dateTime, uint16_t maxLen)
-//{
-//    char *p;
-//
-//    if (!SIM800L_SendCommand("AT+CCLK?", "OK", 3000))
-//        return false;
-//
-//    p = strstr(sim800l_rx_buf, "+CCLK:");
-//    if (p == NULL)
-//        return false;
-//
-//    p = strchr(p, '"');
-//    if (p == NULL)
-//        return false;
-//
-//    p++;    // Skip opening quote
-//
-//    char *end = strchr(p, '"');
-//    if (end == NULL)
-//        return false;
-//
-//    uint16_t len = end - p;
-//
-//    if (len >= maxLen)
-//        len = maxLen - 1;
-//
-//    memcpy(dateTime, p, len);
-//    dateTime[len] = '\0';
-//
-//    return true;
-//}

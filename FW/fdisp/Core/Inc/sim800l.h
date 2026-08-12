@@ -34,6 +34,7 @@ extern "C" {
 #include <stdio.h>
 
 #define SIM800L_HTTP_URL "http://webhook.site/6eaeba4c-d4c9-49ab-bbe7-9a6021d5684b"
+#define SIM800L_TIME_SYNC_URL "https://1bfgjlxn-18830.asse.devtunnels.ms/api/v1/devices/device-001/time-sync"
 
 #define SIM800L_STARTUP_TIMEOUT_MS    60000U
 #define SIM800L_RETRY_INTERVAL_MS      2000U
@@ -66,7 +67,17 @@ SIM800L_StatusTypeDef SIM800L_OpenBearer(void);
 bool SIM800L_Cloud_SendJson(const char *json);
 bool SIM800L_IsInternetConnected(void);
 
-//bool TimeAPI_Get(char *response, uint16_t maxLen);
+
+//char serverTime[32];
+//
+//if (SIM800L_ServerTimeSync(serverTime, sizeof(serverTime)))
+//{
+//    /* serverTime contains:
+//       2026-08-11T09:22:02Z
+//    */
+//}
+
+bool SIM800L_ServerTimeSync(char *timeBuffer, size_t bufferSize);
 
 
 #ifdef __cplusplus
