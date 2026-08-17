@@ -13,7 +13,7 @@
 #include <stdbool.h>
 
 /* Configuration */
-#define RS485_RX_BUFFER_SIZE      24
+#define RS485_RX_BUFFER_SIZE      36
 #define RS485_TX_TIMEOUT_MS       200
 #define RS485_RX_TIMEOUT_MS 50
 
@@ -96,8 +96,8 @@ typedef enum {
 	DISP_RS485_RX_TIMEOUT = 0x81,
 	DISP_RS485_FRAME_ERROR = 0x82,
 	DISP_RS485_START_REC_ERROR = 0x83,
-	DISP_RS485_TRANSACTION_ERROR = 0x84
-
+	DISP_RS485_TRANSACTION_ERROR = 0x84,
+	DISP_RS485_RX_UNKNOWN_STATE = 0x85
 } DISP_ErrorCode_t;
 
 typedef struct {
@@ -118,26 +118,6 @@ extern RS485_Handle_t dispenser;
 void RS485_Init(RS485_Handle_t *h, UART_HandleTypeDef *uart,
 		GPIO_TypeDef *dePort, uint16_t dePin);
 
-/* TX/RX */
-HAL_StatusTypeDef RS485_Send(RS485_Handle_t *h, uint8_t *data, uint16_t len);
-
-HAL_StatusTypeDef RS485_StartReceive(RS485_Handle_t *h);
-
-void RS485_RxCallback(RS485_Handle_t *h);
-
-/* Packet helpers */
-uint16_t Disp_BuildRead(uint8_t addr, uint8_t origin, uint8_t len,
-		uint8_t *txBuf);
-
-uint16_t Disp_BuildWrite(uint8_t addr, uint8_t origin, uint8_t dataLen,
-		uint8_t *payload, uint8_t *txBuf);
-
-/* Parser */
-bool Disp_ParsePacket(uint8_t *buf, uint16_t len);
-
-/* CRC */
-uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
-
 /* Set Dispenser mode*/
 bool Disp_SetMode(uint8_t mode);
 
@@ -146,8 +126,6 @@ DISP_ErrorCode_t Disp_ReadStatus(DISP_Status_t *status);
 /* Get offline records */
 DISP_ErrorCode_t Disp_CheckOfflineFuelingCount(int16_t *count);
 
-uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
-		uint8_t *txBuf);
 DISP_ErrorCode_t Disp_GetOfflineFuelingRecord(uint16_t recordNumber,
 		float *volume, float *sale);
 DISP_ErrorCode_t Disp_GetAccumulatedData(float *volume, float *sale);

@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "dma.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -45,9 +44,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-DISP_Status_t status = DISP_STATUS_SENDING;
-//static DISP_Status_t prevStatus = DISP_STATUS_AFTER_NO_RESP;
-DISP_ErrorCode_t err = DISP_RS485_RX_TIMEOUT;
+DISP_Status_t dispStatus = DISP_STATUS_SENDING;
+DISP_ErrorCode_t dispError = DISP_RS485_RX_UNKNOWN_STATE;
+RS485_Handle_t dispenser;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -59,7 +58,7 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 //uint8_t rxByte;
-//
+
 //void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 //{
 //    if (huart->Instance == USART2)
@@ -69,13 +68,6 @@ void SystemClock_Config(void);
 //        HAL_UART_Receive_IT(&huart2, &rxByte, 1);
 //    }
 //}
-RS485_Handle_t dispenser;
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
-	if (huart == &huart2) {
-		dispenser.rxLen = Size;
-		dispenser.rxDone = true;
-	}
-}
 
 /* USER CODE END 0 */
 
@@ -107,15 +99,17 @@ int main(void) {
 
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
-	MX_DMA_Init();
 	MX_USART2_UART_Init();
-	MX_USART1_UART_Init();
-	MX_USART3_UART_Init();
 	/* USER CODE BEGIN 2 */
 	RS485_Init(&dispenser, &huart2, DE_GPIO_GPIO_Port, DE_GPIO_Pin);
-//  HAL_UART_Receive_IT(&huart2, &rxByte, 1);
 
 	Disp_CheckCommunication(3);
+	float vol, sale;
+	Disp_GetDataWhenStopWorking(&vol,&sale);
+	int16_t ocount;
+	Disp_CheckOfflineFuelingCount(&ocount);
+
+	Disp_GetOfflineFuelingRecord(3,&vol,&sale);
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -124,16 +118,10 @@ int main(void) {
 	while (1) {
 		/* USER CODE END WHILE */
 
-
-		err = Disp_ReadStatus(&status);
-
-		HAL_UART_Transmit(&huart1, (uint8_t*) "Hello from USART1\r\n", 19, 100);
-
-		HAL_UART_Transmit(&huart3, (uint8_t*) "Hello from USART3\r\n", 19, 100);
-
-		HAL_Delay(100);
-
 		/* USER CODE BEGIN 3 */
+		dispError = Disp_ReadStatus(&dispStatus);
+
+		HAL_Delay(400);
 
 	}
 	/* USER CODE END 3 */

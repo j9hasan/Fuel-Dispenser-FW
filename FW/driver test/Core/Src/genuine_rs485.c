@@ -8,13 +8,27 @@
 #include "genuine_rs485.h"
 #include <string.h>
 
-static void RS485_TXEnable(RS485_Handle_t *h) {
-	HAL_GPIO_WritePin(h->dePort, h->dePin, GPIO_PIN_SET);
-}
 
-static void RS485_RXEnable(RS485_Handle_t *h) {
-	HAL_GPIO_WritePin(h->dePort, h->dePin, GPIO_PIN_RESET);
-}
+static void RS485_TXEnable(RS485_Handle_t *h);
+static void RS485_RXEnable(RS485_Handle_t *h);
+static DISP_ErrorCode_t Disp_Transaction(uint8_t *txBuf, uint16_t txLen);
+static DISP_ErrorCode_t Disp_CheckResponse(void);
+static uint16_t Disp_BuildCustomCommand(const uint8_t *payload, uint8_t payloadLen,
+		uint8_t *txBuf);
+static uint16_t Disp_BuildRead(uint8_t addr, uint8_t origin, uint8_t len,
+		uint8_t *txBuf) ;
+uint16_t Disp_BuildWrite(uint8_t addr, uint8_t origin, uint8_t dataLen,
+		uint8_t *payload, uint8_t *txBuf);
+static uint8_t Disp_DecToBCD(uint8_t val);
+static uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
+		uint8_t *txBuf);
+static uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
+
+static uint8_t Disp_BCDToDec(uint8_t bcd);
+static bool Disp_ParsePacket(uint8_t *buf, uint16_t len);
+static void Disp_UART_FlushRx(void);
+
+
 
 void RS485_Init(RS485_Handle_t *h, UART_HandleTypeDef *uart,
 		GPIO_TypeDef *dePort, uint16_t dePin) {
@@ -26,48 +40,149 @@ void RS485_Init(RS485_Handle_t *h, UART_HandleTypeDef *uart,
 
 	RS485_RXEnable(h);
 
-//	RS485_StartReceive(h);
 }
 
-HAL_StatusTypeDef RS485_Send(RS485_Handle_t *h, uint8_t *data, uint16_t len) {
-	HAL_StatusTypeDef ret;
+/**
+ * @brief Requests and reads the current dispenser status.
+ *
+ * Sends a DISP_STATUS command over RS485, waits up to 200 ms for a response,
+ * validates the received packet, and returns the status byte from the reply.
+ *
+ * Master: A5 | addr | 03 | 00 | len | CRC8
+ *
+ * @return DISP_Status_t
+ *         - Received dispenser status on success.
+ *         - DISP_RS485_SEND_ERROR if transmission fails.
+ *         - DISP_STATUS_UNKNOWN on timeout or invalid response.
+ */
+DISP_ErrorCode_t Disp_ReadStatus(DISP_Status_t *status) {
 
-	RS485_TXEnable(h);
+	uint8_t buf[16];
+	uint16_t txLen;
 
-	ret = HAL_UART_Transmit(h->uart, data, len, RS485_TX_TIMEOUT_MS);
+    if (status == NULL)
+        return DISP_RS485_TRANSACTION_ERROR;
 
-	while (__HAL_UART_GET_FLAG(
-			h->uart,
-			UART_FLAG_TC) == RESET)
-		;
+	*status = (DISP_Status_t) DISP_STATUS_SENDING;
+	//Master: A5 | 01 | 03 | 00 | 01 | CRC8
 
-	RS485_RXEnable(h);
+	txLen = Disp_BuildRead(0x01, DISP_ORIGIN_STATUS, DISP_LEN_STATUS, buf);
 
-	return ret;
+	DISP_ErrorCode_t err = Disp_Transaction(buf, txLen);
+
+	if (err != DISP_OK)
+		return err;
+
+	err = Disp_CheckResponse();
+
+	if (err != DISP_OK)
+		return err;
+
+	*status = (DISP_Status_t) dispenser.rxBuf[4];
+
+	return DISP_OK;
 }
 
-/* This This arms the UART/DMA and start receiving for first time*/
+#define DISP_UART_TRANSMIT_WAIT 100
+#define DISP_UART_REC_WAIT 50
+#define DISP_UART_REC_WAIT_LESS 20
 
-HAL_StatusTypeDef RS485_StartReceive(RS485_Handle_t *h) {
-	h->rxDone = false;
-	h->rxLen = 0;
+uint32_t elapsedTime=0;
 
-	HAL_StatusTypeDef ret = HAL_UARTEx_ReceiveToIdle_DMA(h->uart, h->rxBuf,
-	RS485_RX_BUFFER_SIZE);
+static DISP_ErrorCode_t Disp_Transaction(uint8_t *txBuf, uint16_t txLen)
+{
 
-	if (ret == HAL_OK) {
-		__HAL_DMA_DISABLE_IT(h->uart->hdmarx, DMA_IT_HT);
-	}
+    uint32_t startTime;
 
-	return ret;
+    startTime = HAL_GetTick();
+
+    uint8_t header;
+    uint8_t addr;
+    uint8_t function;
+    uint8_t dataLen;
+    uint16_t expectedLen;
+
+    /* Remove anything left from a previous failed transaction */
+    Disp_UART_FlushRx();
+
+    RS485_TXEnable(&dispenser);
+    dispenser.rxLen = 0;
+    if (HAL_UART_Transmit(dispenser.uart , txBuf, txLen, DISP_UART_TRANSMIT_WAIT) != HAL_OK)
+    {
+    	RS485_RXEnable(&dispenser);
+        return DISP_RS485_SEND_ERROR;
+    }
+
+    /* Wait until the last stop bit is actually transmitted */
+    if (__HAL_UART_GET_FLAG(dispenser.uart, UART_FLAG_TC) == RESET)
+    {
+        uint32_t start = HAL_GetTick();
+
+        while (__HAL_UART_GET_FLAG(dispenser.uart, UART_FLAG_TC) == RESET)
+        {
+            if ((HAL_GetTick() - start) > 100U)
+            {
+            	RS485_RXEnable(&dispenser);
+                return DISP_RS485_SEND_ERROR;
+            }
+        }
+    }
+
+    RS485_RXEnable(&dispenser);
+
+    /* Receive header */
+    if (HAL_UART_Receive(dispenser.uart, &header, 1, DISP_UART_REC_WAIT) != HAL_OK)
+        return DISP_RS485_RX_TIMEOUT;
+
+    if (header != 0xA5U)
+        return DISP_RS485_START_REC_ERROR;
+
+    dispenser.rxBuf[0] = header;
+
+    /* Address */
+    if (HAL_UART_Receive(dispenser.uart, &addr, 1, DISP_UART_REC_WAIT_LESS) != HAL_OK)
+        return DISP_RS485_RX_TIMEOUT;
+
+    dispenser.rxBuf[1] = addr;
+
+    /* Function */
+    if (HAL_UART_Receive(dispenser.uart, &function, 1, DISP_UART_REC_WAIT_LESS) != HAL_OK)
+        return DISP_RS485_RX_TIMEOUT;
+
+    dispenser.rxBuf[2] = function;
+
+    /* Data length */
+    if (HAL_UART_Receive(dispenser.uart, &dataLen, 1, DISP_UART_REC_WAIT_LESS) != HAL_OK)
+        return DISP_RS485_RX_TIMEOUT;
+
+    dispenser.rxBuf[3] = dataLen;
+
+    expectedLen = 5U + dataLen;
+
+    if (expectedLen > RS485_RX_BUFFER_SIZE)
+        return DISP_RS485_FRAME_ERROR;
+
+    /* Receive DATA + CRC */
+    if (HAL_UART_Receive(dispenser.uart,
+                         &dispenser.rxBuf[4],
+                         dataLen + 1U,
+						 DISP_UART_REC_WAIT*2) != HAL_OK)
+    {
+        return DISP_RS485_RX_TIMEOUT;
+    }
+
+    dispenser.rxLen = expectedLen;
+
+    elapsedTime = HAL_GetTick() - startTime;
+
+    return DISP_OK;
 }
-
 /*
  * This functions builds costom read/write command
  * const uint8_t cmd[] = { 0x01, 0x0C, 0x00, 0x01, 0x08 };
  * const uint8_t cmd_status[] = { 0x01, 0x03, 0x00, 0x01 };
  */
-uint16_t Disp_BuildCustomCommand(const uint8_t *payload, uint8_t payloadLen,
+static uint16_t Disp_BuildCustomCommand(const uint8_t *payload, uint8_t payloadLen,
 		uint8_t *txBuf) {
 	txBuf[0] = DISP_HEADER;      // 0xA5
 
@@ -87,7 +202,7 @@ uint16_t Disp_BuildCustomCommand(const uint8_t *payload, uint8_t payloadLen,
  * 01 = read length
  * D2 = CRC
  */
-uint16_t Disp_BuildRead(uint8_t addr, uint8_t origin, uint8_t len,
+static uint16_t Disp_BuildRead(uint8_t addr, uint8_t origin, uint8_t len,
 		uint8_t *txBuf) {
 	txBuf[0] = DISP_HEADER;
 	txBuf[1] = addr;
@@ -138,7 +253,7 @@ static uint8_t Disp_DecToBCD(uint8_t val) {
  *
  * Master: A5 | addr | 0C | indexHiBCD | indexLoBCD | len | CRC8
  */
-uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
+static uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
 		uint8_t *txBuf) {
 	uint8_t hiBCD = Disp_DecToBCD((uint8_t) (recordIndex / 100));
 	uint8_t loBCD = Disp_DecToBCD((uint8_t) (recordIndex % 100));
@@ -169,7 +284,7 @@ uint16_t Disp_BuildEventRead(uint8_t addr, uint16_t recordIndex, uint8_t len,
  * CE    CRC
  */
 
-bool Disp_ParsePacket(uint8_t *buf, uint16_t len) {
+static bool Disp_ParsePacket(uint8_t *buf, uint16_t len) {
 	uint8_t crc;
 
 	// Return frame size should be equal to data length + 5 (header, address, function, data length, crc)
@@ -200,81 +315,9 @@ static DISP_ErrorCode_t Disp_CheckResponse(void) {
 	return DISP_OK;
 }
 
-static DISP_ErrorCode_t Disp_Transaction(uint8_t *txBuf, uint16_t txLen) {
-	if (RS485_StartReceive(&dispenser) != HAL_OK)
-		return DISP_RS485_START_REC_ERROR;
-
-	if (RS485_Send(&dispenser, txBuf, txLen) != HAL_OK) {
-		HAL_UART_DMAStop(dispenser.uart);
-		return DISP_RS485_SEND_ERROR;
-	}
-	HAL_Delay(RS485_WAIT_AFTER_SEND);
-	uint32_t start = HAL_GetTick();
-
-	while (!dispenser.rxDone) {
-		if ((HAL_GetTick() - start) > RS485_RX_TIMEOUT_MS) {
-			HAL_UART_DMAStop(dispenser.uart);
-			return DISP_RS485_RX_TIMEOUT;
-		}
-	}
-
-	HAL_UART_DMAStop(dispenser.uart);
-
-	return DISP_OK;
-}
-
-/**
- * @brief Requests and reads the current dispenser status.
- *
- * Sends a DISP_STATUS command over RS485, waits up to 200 ms for a response,
- * validates the received packet, and returns the status byte from the reply.
- *
- * Master: A5 | addr | 03 | 00 | len | CRC8
- *
- * @return DISP_Status_t
- *         - Received dispenser status on success.
- *         - DISP_RS485_SEND_ERROR if transmission fails.
- *         - DISP_STATUS_UNKNOWN on timeout or invalid response.
- */
-DISP_ErrorCode_t Disp_ReadStatus(DISP_Status_t *status) {
-
-	uint8_t buf[16];
-	uint16_t txLen;
-	*status = (DISP_Status_t) DISP_STATUS_SENDING;
-	//Master: A5 | 01 | 03 | 00 | 01 | CRC8
-
-	txLen = Disp_BuildRead(0x01, DISP_ORIGIN_STATUS, DISP_LEN_STATUS, buf);
-
-	DISP_ErrorCode_t err = Disp_Transaction(buf, txLen);
-
-	if (err != DISP_OK)
-		return err;
-
-	err = Disp_CheckResponse();
-
-	if (err != DISP_OK)
-		return err;
-
-	*status = (DISP_Status_t) dispenser.rxBuf[4];
-
-	return DISP_OK;
-}
-
-/**
- * @brief Reads the dispenser offline fueling record count.
- *
- * Sends an offline data request, validates the response, and
- * returns the number of stored offline fueling records in decimal.
- *
- * Master: A5 | addr | 80 | 0E | len | CRC8
- *
- * @return Number of offline fueling records, or -1 on error/timeout.
- */
-
 DISP_ErrorCode_t Disp_CheckOfflineFuelingCount(int16_t *count) {
 
 	*count = 0;
-
 	uint8_t buf[16];
 	uint16_t txLen;
 
@@ -492,7 +535,7 @@ static const uint8_t CRC8_TAB[256] = { 0x00, 0x5e, 0xbc, 0xe2, 0x61, 0x3f, 0xdd,
 		0xc9, 0x4a, 0x14, 0xf6, 0xa8, 0x74, 0x2a, 0xc8, 0x96, 0x15, 0x4b, 0xa9,
 		0xf7, 0xb6, 0xe8, 0x0a, 0x54, 0xd7, 0x89, 0x6b, 0x35 };
 
-uint8_t Disp_CRC8(uint8_t *buf, uint16_t len) {
+static uint8_t Disp_CRC8(uint8_t *buf, uint16_t len) {
 	uint8_t index;
 	uint8_t crc = 0;
 
@@ -518,14 +561,14 @@ uint8_t Disp_CRC8(uint8_t *buf, uint16_t len) {
  */
 DISP_CommState_t Disp_CheckCommunication(uint8_t retries)
 {
-    DISP_Status_t dispStatus = DISP_STATUS_SENDING;
-    DISP_ErrorCode_t err = DISP_RS485_RX_TIMEOUT;      // or whatever the return type is
+    DISP_Status_t dispStatus;
+    DISP_ErrorCode_t err;
 
-    for (uint8_t i = 0; i < retries; i++)
+    for (uint8_t i = 0U; i < retries; i++)
     {
-    	err  = Disp_ReadStatus(&dispStatus);
+        err = Disp_ReadStatus(&dispStatus);
 
-        if (dispStatus != DISP_STATUS_SENDING)
+        if (err == DISP_OK)
         {
             return DISP_CONNECTED;
         }
@@ -534,4 +577,44 @@ DISP_CommState_t Disp_CheckCommunication(uint8_t retries)
     }
 
     return DISP_DISCONNECTED;
+}
+
+static void RS485_TXEnable(RS485_Handle_t *h) {
+	HAL_GPIO_WritePin(h->dePort, h->dePin, GPIO_PIN_SET);
+}
+
+static void RS485_RXEnable(RS485_Handle_t *h) {
+	HAL_GPIO_WritePin(h->dePort, h->dePin, GPIO_PIN_RESET);
+}
+static void Disp_UART_FlushRx(void)
+{
+    UART_HandleTypeDef *huart = dispenser.uart;
+
+    if (huart == NULL)
+        return;
+
+    dispenser.rxLen = 0;
+
+#if defined(STM32H7xx)
+    /*
+     * H7: drain RX FIFO/data register.
+     */
+    while (__HAL_UART_GET_FLAG(huart, UART_FLAG_RXNE) != RESET)
+    {
+        (void)huart->Instance->RDR;
+    }
+#else
+    /*
+     * F1/F4-style UART.
+     */
+    while (__HAL_UART_GET_FLAG(huart, UART_FLAG_RXNE) != RESET)
+    {
+        (void)huart->Instance->DR;
+    }
+#endif
+
+    __HAL_UART_CLEAR_OREFLAG(huart);
+    __HAL_UART_CLEAR_FEFLAG(huart);
+    __HAL_UART_CLEAR_NEFLAG(huart);
+    __HAL_UART_CLEAR_PEFLAG(huart);
 }

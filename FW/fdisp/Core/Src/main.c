@@ -59,14 +59,13 @@ RTC_HandleTypeDef hrtc;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
-DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
 uint8_t txBuf[16]; // Buffer for storing command to be sent
 
-DISP_Status_t status = DISP_STATUS_AFTER_NO_RESP;
-static DISP_Status_t prevStatus = DISP_STATUS_AFTER_NO_RESP;
+DISP_Status_t status = DISP_STATUS_SENDING;
+static DISP_Status_t prevStatus = DISP_STATUS_SENDING;
 DISP_ErrorCode_t err = DISP_RS485_RX_TIMEOUT;
 
 int16_t offline_record_count = 0;
@@ -88,7 +87,6 @@ volatile int8_t sim800l_signal_quality = -1;
 void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_I2C1_Init(void);
@@ -104,12 +102,6 @@ extern uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
-	if (huart == &huart1) {
-		dispenser.rxLen = Size;
-		dispenser.rxDone = true;
-	}
-}
 /**
  * @brief Read all offline fueling records from the dispenser and upload them.
  *
@@ -174,37 +166,36 @@ bool Disp_UploadOfflineRecords(uint8_t nozzleNumber) {
 int main(void)
 {
 
-	/* USER CODE BEGIN 1 */
+  /* USER CODE BEGIN 1 */
 
-	/* USER CODE END 1 */
+  /* USER CODE END 1 */
 
-	/* MPU Configuration--------------------------------------------------------*/
-	MPU_Config();
+  /* MPU Configuration--------------------------------------------------------*/
+  MPU_Config();
 
-	/* MCU Configuration--------------------------------------------------------*/
+  /* MCU Configuration--------------------------------------------------------*/
 
-	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-	HAL_Init();
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
 
-	/* USER CODE BEGIN Init */
+  /* USER CODE BEGIN Init */
 
-	/* USER CODE END Init */
+  /* USER CODE END Init */
 
-	/* Configure the system clock */
-	SystemClock_Config();
+  /* Configure the system clock */
+  SystemClock_Config();
 
-	/* USER CODE BEGIN SysInit */
+  /* USER CODE BEGIN SysInit */
 
-	/* USER CODE END SysInit */
+  /* USER CODE END SysInit */
 
-	/* Initialize all configured peripherals */
-	MX_GPIO_Init();
-	MX_DMA_Init();
-	MX_USART1_UART_Init();
-	MX_USART3_UART_Init();
-	MX_I2C1_Init();
-	MX_RTC_Init();
-	/* USER CODE BEGIN 2 */
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART1_UART_Init();
+  MX_USART3_UART_Init();
+  MX_I2C1_Init();
+  MX_RTC_Init();
+  /* USER CODE BEGIN 2 */
 	RS485_Init(&dispenser, &huart1,
 	DE_GPIO_GPIO_Port,
 	DE_GPIO_Pin);
@@ -569,22 +560,6 @@ static void MX_USART3_UART_Init(void)
   /* USER CODE BEGIN USART3_Init 2 */
 
   /* USER CODE END USART3_Init 2 */
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
 
 }
 
