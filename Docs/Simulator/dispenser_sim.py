@@ -1,5 +1,6 @@
 import serial
 import threading
+import time
 
 # CRC8 lookup table from your C code
 CRC8_TAB = [
@@ -66,6 +67,11 @@ def build_slave_response(addr, func, data_bytes):
     frame = [header] + frame_wo_crc + [crc]
     return bytes(frame)
 
+def send_response(ser, response):
+    time.sleep(0.050)  # 50 ms response delay
+    ser.write(response)
+    ser.flush()
+
 def main():
     ser = serial.Serial(port="COM13", baudrate=4800, timeout=1)
     print("Fuel dispenser simulator running on COM13 at 4800 baud...")
@@ -76,6 +82,7 @@ def main():
         byte = ser.read(1)
         if not byte:
             continue
+
         if byte[0] != 0xA5:
             continue
 
@@ -85,6 +92,7 @@ def main():
 
         addr, func, origin, length = rest
         master_frame = [0xA5, addr, func, origin, length]
+
         print("Master frame:", [hex(x) for x in master_frame])
 
         master_crc = crc8([addr, func, origin, length])
@@ -92,31 +100,55 @@ def main():
 
         # --- 4.5 Special case: origin 0x30, length 0x08 ---
         if func == 0x03 and origin == 0x30 and length == 0x08:
-            # Example: volume 58.37L, sale 123456.78
-            # Encode as bytes: 0x00 0x58 0x37 0x00 0x12 0x34 0x56 0x78
-            data_bytes = [0x00, 0x58, 0x37, 0x00, 0x12, 0x34, 0x56, 0x78]
+
+            data_bytes = [
+                0x00, 0x58, 0x37,
+                0x00, 0x12, 0x34, 0x56, 0x78
+            ]
+
             response = build_slave_response(addr, func, data_bytes)
-            ser.write(response)
-            print("Slave response:", response.hex(), "→ volume=58.37L, sale=123456.78")
+
+            send_response(ser, response)
+
+            print(
+                "Slave response:",
+                response.hex(),
+                "→ volume=58.37L, sale=123456.78"
+            )
 
         # --- 4.11 Special case: offline accumulative data ---
         elif func == 0x03 and origin == 0x80 and length == 0x0E:
-            # Example payload: volume 58.37L, sale 123456.78, fueling times = 3
+
             data_bytes = [
-                0x00,0x00,0x00,0x58,0x37,  # volume
-                0x00,0x00,0x00,0x12,0x34,0x56,0x78,  # sale
-                0x00,0x12  # fueling times
+                0x00, 0x00, 0x00, 0x58, 0x37,
+                0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78,
+                0x00, 0x12
             ]
+
             response = build_slave_response(addr, func, data_bytes)
-            ser.write(response)
-            print("Slave response:", response.hex(),
-                  "→ volume=58.37L, sale=123456.78, fueling times=3")
+
+            send_response(ser, response)
+
+            print(
+                "Slave response:",
+                response.hex(),
+                "→ volume=58.37L, sale=123456.78, fueling times=3"
+            )
+
         else:
             # Normal status response
             data_bytes = [current_status]
+
             response = build_slave_response(addr, func, data_bytes)
-            ser.write(response)
-            print("Slave response:", response.hex(), "→", status_map[current_status])
+
+            send_response(ser, response)
+
+            print(
+                "Slave response:",
+                response.hex(),
+                "→",
+                status_map[current_status]
+            )
 
 if __name__ == "__main__":
     main()
