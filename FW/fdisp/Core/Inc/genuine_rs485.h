@@ -17,7 +17,7 @@
 #define RS485_TX_TIMEOUT_MS       200
 #define RS485_RX_TIMEOUT_MS 50
 
-#define DISP_POLL_RATE 50
+#define DISP_POLL_RATE 200
 #define RS485_WAIT_AFTER_SEND 50
 /* Device mode */
 
@@ -76,46 +76,53 @@ typedef enum {
 	DISP_STATUS_STOPPED_FUELING = 0x03, // Status after Stop fueling
 	DISP_STATUS_BUSY = 0x04, // Fueling
 	DISP_STATUS_NOZZLE_NOT_RETURNED = 0x05,
-	DISP_STATUS_AFTER_RESTART = 0x06, // Nozzle offline
-	DISP_STATUS_SENDING = 0xFF // dispenser offline
+	DISP_STATUS_AFTER_RESTART = 0x06 // Nozzle offline
+//	DISP_STATUS_SENDING = 0xFF // dispenser offline
 } DISP_Status_t;
 
-/* Error codes returned by device when 0x8X happens*/
+/* Error codes returned by device and mcu*/
 typedef enum {
-	DISP_OK = 0x00,
+	DISP_OK                            = 0x00,
 	/* Device errors (0x8X response) */
-	DISP_WRONG_CMD = 0x01,
-	DISP_DEVICE_STOP_WORKING = 0x03,
-	DISP_RESEND_COMMAND = 0x04,
-	DISP_DEVICE_BUSY = 0x05,
-	DISP_DEVICE_OFFLINE = 0x06,
-	DISP_CRC_ERROR = 0x07,
+	DISP_WRONG_CMD                     = 0x01,
+	DISP_DEVICE_STOP_WORKING           = 0x03,
+	DISP_RESEND_COMMAND                = 0x04,
+	DISP_DEVICE_BUSY                   = 0x05,
+	DISP_DEVICE_OFFLINE                = 0x06,
+	DISP_CRC_ERROR                     = 0x07,
 
 	/* Local communication errors */
-	DISP_RS485_SEND_ERROR = 0x80,
-	DISP_RS485_RX_TIMEOUT = 0x81,
-	DISP_RS485_FRAME_ERROR = 0x82,
-	DISP_RS485_START_REC_ERROR = 0x83,
-	DISP_RS485_TRANSACTION_ERROR = 0x84,
-	DISP_RS485_RX_UNKNOWN_STATE = 0x85
+	DISP_RS485_UART_DMA_ERROR          = 0x70,
+	DISP_RS485_UART_RX_TIMEOUT         = 0x71,
+	DISP_RS485_UART_TX_TIMEOUT         = 0x72,
+	DISP_RS485_UART_RX_OVERRUN         = 0x73,
+	DISP_RS485_UART_RX_FRAMING         = 0x74,
+	DISP_RS485_UART_RX_NOISE           = 0x75,
+	DISP_RS485_UART_RX_PARITY          = 0x76,
+	DISP_RS485_UART_RX_BUSY            = 0x77,
+	DISP_RS485_UART_RX_UNKNOWN_STATE   = 0x78,
+	DISP_RS485_UART_RX_UNEXPECTED_EVENT= 0x79,
+	DISP_PROTOCOL_INVALID_LENGTH       = 0x80,
+	DISP_PROTOCOL_PARSE_ERROR          = 0x90,
+	DISP_ERROR                         = 0x91,
+	DISP_NULL_POINTER                  = 0x92,
+
 } DISP_ErrorCode_t;
 
-typedef struct {
-	UART_HandleTypeDef *uart;
+typedef enum
+{
+    DISP_PARSE_OK = 0x00,
+	DISP_PARSE_INFO_WRONG,
+    DISP_PARSE_NULL_BUFFER,
+    DISP_PARSE_TOO_SHORT,
+    DISP_PARSE_LENGTH_MISMATCH,
+    DISP_PARSE_INVALID_HEADER,
+    DISP_PARSE_CRC_ERROR
 
-	GPIO_TypeDef *dePort;
-	uint16_t dePin;
-
-	uint8_t rxBuf[RS485_RX_BUFFER_SIZE];
-	volatile uint16_t rxLen;
-	volatile bool rxDone;
-
-} RS485_Handle_t;
-
-extern RS485_Handle_t dispenser;
+} DISP_ParseError_t;
 
 /* Init */
-void RS485_Init(RS485_Handle_t *h, UART_HandleTypeDef *uart,
+void RS485_Init(UART_HandleTypeDef *uart,
 		GPIO_TypeDef *dePort, uint16_t dePin);
 
 /* Set Dispenser mode*/

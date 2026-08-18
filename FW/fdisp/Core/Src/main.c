@@ -25,19 +25,11 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include "genuine_rs485.h"
-#include "json_builder.h"
-#include "sim800l.h"
-#include "display.h"
-#include "ssd1306.h"
-#include "time_api.h"
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-RS485_Handle_t dispenser;
-
-DISP_CommState_t CommState = DISP_DISCONNECTED;
 
 /* USER CODE END PTD */
 
@@ -53,23 +45,16 @@ DISP_CommState_t CommState = DISP_DISCONNECTED;
 
 /* Private variables ---------------------------------------------------------*/
 
-I2C_HandleTypeDef hi2c1;
-
-RTC_HandleTypeDef hrtc;
-
 UART_HandleTypeDef huart1;
-UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
-uint8_t txBuf[16]; // Buffer for storing command to be sent
-
-DISP_Status_t status = DISP_STATUS_SENDING;
-static DISP_Status_t prevStatus = DISP_STATUS_SENDING;
-DISP_ErrorCode_t err = DISP_RS485_RX_TIMEOUT;
+DISP_Status_t disp_status;
+static DISP_Status_t prevStatus;
+DISP_ErrorCode_t disp_err;
 
 int16_t offline_record_count = 0;
-DISP_OfflineRecord_t offline_rec = { 0 };
 
 float vol_stopped = 0;
 float sale_stopped = 0;
@@ -77,85 +62,20 @@ float vol_accumulated = 0;
 float sale_accumulated = 0;
 int nozzleNumber = 1;
 
-/* Holds the outcome of the SIM800L connectivity test so it can be inspected
- in the debugger (Live Watch / Live Expressions) without a second UART. */
-volatile SIM800L_StatusTypeDef sim800l_status = SIM800L_INITIALIZING;
-volatile int8_t sim800l_signal_quality = -1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_USART3_UART_Init(void);
-static void MX_I2C1_Init(void);
-static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
-
-/* Disp_CRC8 lives in genuine_rs485.c; declared here in case it isn't
- * already exposed via genuine_rs485.h. */
-extern uint8_t Disp_CRC8(uint8_t *buf, uint16_t len);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-/**
- * @brief Read all offline fueling records from the dispenser and upload them.
- *
- * @param nozzleNumber Dispenser nozzle number.
- *
- * @retval true  Upload successful or no offline records exist.
- * @retval false Failed to read records or upload.
- */
-bool Disp_UploadOfflineRecords(uint8_t nozzleNumber) {
-	int16_t offline_record_count;
-	float vol_offline;
-	float sale_offline;
-
-	Disp_SetMode(DISP_MODE_CONTROL);
-
-	if (Disp_CheckOfflineFuelingCount(&offline_record_count) != DISP_OK) {
-		return false;
-	}
-
-	HAL_Delay(200);
-
-	/* No offline records */
-	if (offline_record_count == 0) {
-		return true;
-	}
-
-	/* Invalid count */
-	if (offline_record_count < 0) {
-		return false;
-	}
-
-	char json[JSON_BUFFER_SIZE];
-
-	JSON_OfflineBegin(json, sizeof(json), offline_record_count, nozzleNumber);
-
-	for (int k = offline_record_count; k > 0; k--) {
-		if (Disp_GetOfflineFuelingRecord(k, &vol_offline, &sale_offline)
-				!= DISP_OK) {
-			return false;
-		}
-
-		JSON_OfflineAddRecord(sale_offline, vol_offline, (k == 1));
-	}
-
-	JSON_OfflineEnd();
-
-	if (!SIM800L_IsInternetConnected()) {
-		return false;
-	}
-
-	return SIM800L_Cloud_SendJson(JSON_GetBuffer());
-}
-
-
 
 /* USER CODE END 0 */
 
@@ -191,79 +111,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
-  MX_USART3_UART_Init();
-  MX_I2C1_Init();
-  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-	RS485_Init(&dispenser, &huart1,
-	DE_GPIO_GPIO_Port,
-	DE_GPIO_Pin);
-	// IIC Display init
-	ssd1306_Init();
+  RS485_Init(&huart1, DE_GPIO_GPIO_Port, DE_GPIO_Pin);
 
-	// Json Init
-	// Uart2 Init, communication, delay about 40s
-
-	//SIM800_BootAnimation();
-
-
-	sim800l_status = SIM800L_Initialize(&huart3, SIM800L_STARTUP_TIMEOUT_MS); // Try for up to 60 seconds
-
-	if (sim800l_status == SIM800L_OK) {
-
-		deviceOffline = false;
-		Display_SetMiddleText("Connected");
-		HAL_Delay(1000);
-		Display_SetNetStatus(DISPLAY_NET_ONLINE);
-
-		Display_SetStatusText(SyncServerTimeText(SyncServerTime()));
-
-		Display_SetMiddleText(RTC_GetDateTimeString());
-
-		HAL_Delay(2000);
-
-	} else {
-		deviceOffline = true;
-		Display_SetMiddleText("NET OFFLINE");
-		HAL_Delay(1000);
-		Display_SetNetStatus(DISPLAY_NET_OFFLINE);
-		// Continue operating in offline mode
-	}
-
-	Display_SetMiddleText("Connecting to Dispenser");
-	HAL_Delay(1000);
-
-	CommState = Disp_CheckCommunication(5);
-
-	if (CommState == DISP_CONNECTED) {
-		/* Continue initialization */
-		Display_SetMiddleText("Connected");
-		HAL_Delay(1000);
-		Display_SetMiddleText("Setting Control Mode");
-		Disp_SetMode(DISP_MODE_CONTROL);
-		HAL_Delay(1000);
-		Display_SetMiddleText("Handling Offline Data");
-		Disp_UploadOfflineRecords(nozzleNumber);
-		HAL_Delay(1000);
-		HAL_GPIO_WritePin(USER_LED_GPIO_Port, USER_LED_Pin, GPIO_PIN_SET);
-	} else {
-		/* Handle disconnected dispenser */
-
-		const char *msg[] =
-				{ "No Dispenser Detected", "No Dispenser Detected." };
-
-		uint8_t idx = 0;
-		while (1) {
-			// No dispenser connected
-			Display_SetMiddleText(msg[idx]);
-			idx = (idx + 1) % 2;
-			if (Disp_CheckCommunication(1) == DISP_CONNECTED) {
-				break;
-			}
-			HAL_Delay(100000);
-		}
-	}
+  Disp_SetMode(DISP_MODE_CONTROL);
+  int16_t offlineFuelingCount;
+  Disp_CheckOfflineFuelingCount(&offlineFuelingCount);
+  DISP_CommState_t CommState = Disp_CheckCommunication(5);
 
   /* USER CODE END 2 */
 
@@ -271,60 +127,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 
 	while (1) {
-		// Remark on the flow chart: POS checks status every 100 ms.
-
-		err = Disp_ReadStatus(&status);
+		disp_err = Disp_ReadStatus(&disp_status);
 
 		HAL_Delay(DISP_POLL_RATE);
-		Display_SetMiddleText("IDLE");
-		if (err != DISP_OK) {
-			// handle communication/device error
-			Display_SetMiddleText("Dispenser Disconnected.");
-			HAL_Delay(1000);
-		} else {
-			// use status
-			if ((status == DISP_STATUS_STOPPED_FUELING)
-					&& (prevStatus != DISP_STATUS_STOPPED_FUELING)) {
-				/* Fueling just finished */
-				Display_SetMiddleText("New Record Detected");
-				HAL_Delay(500);
-				Display_SetMiddleText("Getting Record");
-				HAL_Delay(500);
-				if (Disp_GetDataWhenStopWorking(&vol_stopped, &sale_stopped)
-						== DISP_OK) {
-					// Process transaction once
-					Display_SetMiddleText("Getting Found");
-					HAL_Delay(500);
-					char json[JSON_BUFFER_SIZE];
-					JSON_SaleBegin(json, sizeof(json), "1784713845",
-							sale_stopped, vol_stopped, nozzleNumber);
 
-					JSON_SaleEnd();
-
-					Display_SetMiddleText("Sending to cloud");
-					HAL_Delay(500);
-
-					if (SIM800L_IsInternetConnected()) {
-//						sim800l_signal_quality = SIM800L_GetSignalQuality();
-						SIM800L_Cloud_SendJson(JSON_GetBuffer());
-						Display_SetMiddleText("Sent");
-						HAL_Delay(500);
-					} else {
-						// Display sending error, store in SD card
-						Display_SetMiddleText(
-								"Cloud Sending Failed, Check internet");
-					}
-				}
-				if (Disp_GetAccumulatedData(&vol_accumulated, &sale_accumulated)
-						== DISP_OK) {
-					// Process accumulated totals
-//					HAL_Delay(100);
-				}
-			}
-
-			/* Save current status for next iteration */
-			prevStatus = status;
-		}
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -354,10 +160,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_DIV1;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -381,90 +186,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief I2C1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_I2C1_Init(void)
-{
-
-  /* USER CODE BEGIN I2C1_Init 0 */
-
-  /* USER CODE END I2C1_Init 0 */
-
-  /* USER CODE BEGIN I2C1_Init 1 */
-
-  /* USER CODE END I2C1_Init 1 */
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x00707CBB;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.OwnAddress2 = 0;
-  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure Analogue filter
-  */
-  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure Digital filter
-  */
-  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2C1_Init 2 */
-
-  /* USER CODE END I2C1_Init 2 */
-
-}
-
-/**
-  * @brief RTC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_RTC_Init(void)
-{
-
-  /* USER CODE BEGIN RTC_Init 0 */
-
-  /* USER CODE END RTC_Init 0 */
-
-  /* USER CODE BEGIN RTC_Init 1 */
-
-  /* USER CODE END RTC_Init 1 */
-
-  /** Initialize RTC Only
-  */
-  hrtc.Instance = RTC;
-  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
-  hrtc.Init.AsynchPrediv = 127;
-  hrtc.Init.SynchPrediv = 255;
-  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
-  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
-  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
-  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN RTC_Init 2 */
-
-  /* USER CODE END RTC_Init 2 */
-
 }
 
 /**
@@ -516,50 +237,18 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
-  * @brief USART3 Initialization Function
-  * @param None
-  * @retval None
+  * Enable DMA controller clock
   */
-static void MX_USART3_UART_Init(void)
+static void MX_DMA_Init(void)
 {
 
-  /* USER CODE BEGIN USART3_Init 0 */
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
-  /* USER CODE END USART3_Init 0 */
-
-  /* USER CODE BEGIN USART3_Init 1 */
-
-  /* USER CODE END USART3_Init 1 */
-  huart3.Instance = USART3;
-  huart3.Init.BaudRate = 115200;
-  huart3.Init.WordLength = UART_WORDLENGTH_8B;
-  huart3.Init.StopBits = UART_STOPBITS_1;
-  huart3.Init.Parity = UART_PARITY_NONE;
-  huart3.Init.Mode = UART_MODE_TX_RX;
-  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart3.Init.ClockPrescaler = UART_PRESCALER_DIV1;
-  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_SetTxFifoThreshold(&huart3, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_SetRxFifoThreshold(&huart3, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_DisableFifoMode(&huart3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART3_Init 2 */
-
-  /* USER CODE END USART3_Init 2 */
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
 
 }
 
@@ -577,7 +266,6 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
